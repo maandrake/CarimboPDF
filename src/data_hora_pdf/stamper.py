@@ -23,6 +23,11 @@ class StampOptions:
     logo_path: str | None = None
     logo_width_cm: float = 2.0
     logo_margin_cm: float = 0.5
+    # Proteção com senha
+    protection_password: str | None = None  # Senha para proteção (edição)
+    restrict_editing: bool = False  # Restringir edição do documento
+    allow_copy: bool = True  # Permitir copiar texto
+    encrypt_content: bool = False  # Criptografar todo o conteúdo
 
 
 def _month_name_pt(month: int) -> str:
@@ -212,13 +217,69 @@ def stamp_pdf(
             same = Path(input_pdf).resolve() == Path(output_pdf).resolve()
         except Exception:
             same = False
-        if same:
-            target = Path(output_pdf)
-            tmp = target.with_name(f"{target.stem}__tmp__{target.suffix}")
-            doc.save(str(tmp))
-            replace_plan = (tmp, target)
+        
+        # Aplicar proteções se especificadas
+        if options.protection_password or options.restrict_editing or not options.allow_copy or options.encrypt_content:
+            # Configurar permissões
+            permissions = -1  # Todas as permissões por padrão
+            
+            if options.restrict_editing:
+                # Remove permissões de modificação
+                permissions &= ~(fitz.PDF_PERM_MODIFY | fitz.PDF_PERM_ANNOTATE | fitz.PDF_PERM_FORM)
+            
+            if not options.allow_copy:
+                # Remove permissões de cópia
+                permissions &= ~(fitz.PDF_PERM_COPY | fitz.PDF_PERM_ACCESSIBILITY)
+            
+            # Definir senhas
+            owner_password = options.protection_password or ""
+            user_password = ""  # Sem senha para abrir o documento
+            
+            # Aplicar encriptação
+            if options.encrypt_content:
+                # Usar encriptação forte
+                encrypt_method = fitz.PDF_ENCRYPT_AES_256
+            else:
+                # Usar encriptação padrão
+                encrypt_method = fitz.PDF_ENCRYPT_RC4_128
+            
+            # Configurar a proteção do documento
+            try:
+                # O PyMuPDF usa a função save com parâmetros de encriptação
+                if same:
+                    target = Path(output_pdf)
+                    tmp = target.with_name(f"{target.stem}__tmp__{target.suffix}")
+                    doc.save(str(tmp), 
+                            encryption=encrypt_method,
+                            owner_pw=owner_password,
+                            user_pw=user_password,
+                            permissions=permissions)
+                    replace_plan = (tmp, target)
+                else:
+                    doc.save(output_pdf,
+                            encryption=encrypt_method,
+                            owner_pw=owner_password,
+                            user_pw=user_password,
+                            permissions=permissions)
+            except Exception as e:
+                # Fallback: salvar sem proteção se der erro
+                print(f"[data-hora-pdf] Aviso: Não foi possível aplicar proteção: {e}")
+                if same:
+                    target = Path(output_pdf)
+                    tmp = target.with_name(f"{target.stem}__tmp__{target.suffix}")
+                    doc.save(str(tmp))
+                    replace_plan = (tmp, target)
+                else:
+                    doc.save(output_pdf)
         else:
-            doc.save(output_pdf)
+            # Salvar normalmente sem proteção
+            if same:
+                target = Path(output_pdf)
+                tmp = target.with_name(f"{target.stem}__tmp__{target.suffix}")
+                doc.save(str(tmp))
+                replace_plan = (tmp, target)
+            else:
+                doc.save(output_pdf)
     finally:
         doc.close()
         if replace_plan is not None:
