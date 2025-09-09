@@ -2,7 +2,7 @@ import argparse
 import os
 import json
 import sys
-from datetime import date
+from datetime import date, datetime
 from pathlib import Path
 from .stamper import StampOptions, stamp_pdf
 import tkinter as tk
@@ -11,6 +11,13 @@ try:
     from tkinter import ttk  # type: ignore
 except Exception:
     ttk = None
+
+# Tentar importar tkcalendar para o widget de calendário
+try:
+    from tkcalendar import DateEntry  # type: ignore
+    HAS_CALENDAR = True
+except ImportError:
+    HAS_CALENDAR = False
 
 
 def _get_config_file() -> Path:
@@ -104,6 +111,8 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--restrict-editing", action="store_true", help="Restringir edição do documento")
     p.add_argument("--no-copy", action="store_true", help="Desativar cópia de texto e imagens")
     p.add_argument("--encrypt-content", action="store_true", help="Criptografar todo o conteúdo do documento")
+    # Data personalizada
+    p.add_argument("--date", help="Data personalizada no formato DD/MM/AAAA (não pode ser futura)")
     return p
 
 
@@ -156,6 +165,23 @@ def _run_gui_with_form(args: argparse.Namespace) -> int:
     # Novas opções
     v_show_password = tk.BooleanVar(value=False)
     v_save_password = tk.BooleanVar(value=saved_config.get("save_password", False))
+    # Data personalizada
+    v_use_custom_date = tk.BooleanVar(value=saved_config.get("use_custom_date", False))
+    
+    # Carregar data salva ou usar hoje como padrão
+    saved_date_str = saved_config.get("custom_date")
+    if saved_date_str:
+        try:
+            saved_date = datetime.strptime(saved_date_str, "%Y-%m-%d").date()
+            # Verificar se a data salva não é futura
+            if saved_date <= date.today():
+                default_date = saved_date
+            else:
+                default_date = date.today()
+        except:
+            default_date = date.today()
+    else:
+        default_date = date.today()
 
     # Helpers
     def browse_input():
@@ -190,6 +216,10 @@ def _run_gui_with_form(args: argparse.Namespace) -> int:
         else:
             password_entry.configure(show="*")
 
+    def toggle_custom_date():
+        """Habilita/desabilita o seletor de data."""
+        pass  # Será redefinido após criar os widgets
+
     def save_current_config():
         """Salva as configurações atuais."""
         config = {
@@ -208,11 +238,23 @@ def _run_gui_with_form(args: argparse.Namespace) -> int:
             "no_copy": v_no_copy.get(),
             "encrypt_content": v_encrypt_content.get(),
             "save_password": v_save_password.get(),
+            "use_custom_date": v_use_custom_date.get(),
         }
         
         # Salvar senha apenas se a opção estiver marcada
         if v_save_password.get():
             config["protection_password"] = v_protection_password.get()
+            
+        # Salvar data personalizada se estiver sendo usada
+        if v_use_custom_date.get():
+            try:
+                if HAS_CALENDAR and hasattr(date_entry, 'get_date'):
+                    selected_date = date_entry.get_date()
+                    config["custom_date"] = selected_date.strftime("%Y-%m-%d")
+                else:
+                    config["custom_date"] = default_date.strftime("%Y-%m-%d")
+            except:
+                pass
         
         _save_config(config)
 
@@ -260,7 +302,28 @@ def _run_gui_with_form(args: argparse.Namespace) -> int:
                 opts.logo_margin_cm = lm
 
             cidade_val = v_cidade.get().strip() or cidade_default
-            stamp_pdf(inp, outp, cidade_val, date.today(), opts)
+            
+            # Determinar qual data usar
+            if v_use_custom_date.get():
+                try:
+                    if HAS_CALENDAR and hasattr(date_entry, 'get_date'):
+                        selected_date = date_entry.get_date()
+                    else:
+                        # Fallback para campo de texto
+                        date_str = v_date_string.get()
+                        selected_date = datetime.strptime(date_str, "%d/%m/%Y").date()
+                        
+                    # Verificar se a data não é futura
+                    if selected_date > date.today():
+                        messagebox.showwarning("Data inválida", "Não é possível usar uma data futura. Usando a data de hoje.", parent=root)
+                        selected_date = date.today()
+                except Exception:
+                    messagebox.showwarning("Data inválida", "Formato de data inválido. Usando a data de hoje.", parent=root)
+                    selected_date = date.today()
+            else:
+                selected_date = date.today()
+                
+            stamp_pdf(inp, outp, cidade_val, selected_date, opts)
             messagebox.showinfo("Concluído", f"PDF atualizado com sucesso:\n{outp}", parent=root)
         except Exception as e:
             messagebox.showerror("Falha", f"Erro ao processar o PDF:\n{e}", parent=root)
@@ -301,23 +364,57 @@ def _run_gui_with_form(args: argparse.Namespace) -> int:
     page_spin = (ttk.Spinbox(container, from_=0, to=9999, textvariable=v_page, width=6) if ttk else tk.Spinbox(container, from_=0, to=9999, textvariable=v_page, width=6))
     add_row(4, "Página (0=1ª):", page_spin)
 
+    # Data personalizada
+    date_row = (ttk.Frame(container) if ttk else tk.Frame(container))
+    use_custom_chk = (ttk.Checkbutton(date_row, text="Usar data personalizada:", variable=v_use_custom_date, command=toggle_custom_date) if ttk else tk.Checkbutton(date_row, text="Usar data personalizada:", variable=v_use_custom_date, command=toggle_custom_date))
+    
+    # Variável para data no formato string (para fallback)
+    v_date_string = tk.StringVar(value=default_date.strftime("%d/%m/%Y"))
+    
+    # Criar widget de data baseado na disponibilidade do tkcalendar
+    if HAS_CALENDAR:
+        date_entry = DateEntry(date_row, 
+                             width=12, 
+                             background='darkblue',
+                             foreground='white', 
+                             borderwidth=2,
+                             date_pattern='dd/mm/yyyy',
+                             maxdate=date.today(),  # Não permite datas futuras
+                             state="disabled")
+        date_entry.set_date(default_date)
+    else:
+        # Fallback para Entry simples se tkcalendar não estiver disponível
+        date_entry = (ttk.Entry(date_row, textvariable=v_date_string, width=12, state="disabled") if ttk else tk.Entry(date_row, textvariable=v_date_string, width=12, state="disabled"))
+    
+    use_custom_chk.pack(side=tk.LEFT, padx=(0, 5))
+    date_entry.pack(side=tk.LEFT)
+    add_row(5, "", date_row)
+    
+    # Redefinir a função toggle_custom_date agora que os widgets foram criados
+    def toggle_custom_date():
+        """Habilita/desabilita o seletor de data."""
+        if v_use_custom_date.get():
+            date_entry.configure(state="normal")
+        else:
+            date_entry.configure(state="disabled")
+
     fontsize_spin = (ttk.Spinbox(container, from_=6, to=72, increment=0.5, textvariable=v_fontsize, width=6) if ttk else tk.Spinbox(container, from_=6, to=72, increment=0.5, textvariable=v_fontsize, width=6))
-    add_row(5, "Tamanho fonte:", fontsize_spin)
+    add_row(6, "Tamanho fonte:", fontsize_spin)
 
     font_row = (ttk.Frame(container) if ttk else tk.Frame(container))
     font_entry = (ttk.Combobox(font_row, textvariable=v_font, values=["helv","times","cour"], width=10) if ttk else tk.Entry(font_row, textvariable=v_font, width=12))
     font_entry.pack(side=tk.LEFT)
-    add_row(6, "Fonte:", font_row)
+    add_row(7, "Fonte:", font_row)
 
     color_entry = (ttk.Entry(container, textvariable=v_color) if ttk else tk.Entry(container, textvariable=v_color))
-    add_row(7, "Cor (HEX):", color_entry)
+    add_row(8, "Cor (HEX):", color_entry)
 
     style_row = (ttk.Frame(container) if ttk else tk.Frame(container))
     bold_chk = (ttk.Checkbutton(style_row, text="Negrito", variable=v_bold) if ttk else tk.Checkbutton(style_row, text="Negrito", variable=v_bold))
     italic_chk = (ttk.Checkbutton(style_row, text="Itálico", variable=v_italic) if ttk else tk.Checkbutton(style_row, text="Itálico", variable=v_italic))
     bold_chk.pack(side=tk.LEFT, padx=6)
     italic_chk.pack(side=tk.LEFT, padx=6)
-    add_row(8, "Estilo:", style_row)
+    add_row(9, "Estilo:", style_row)
 
     # Logo
     logo_row = (ttk.Frame(container) if ttk else tk.Frame(container))
@@ -325,17 +422,17 @@ def _run_gui_with_form(args: argparse.Namespace) -> int:
     logo_btn = (ttk.Button(logo_row, text="Selecionar...", command=browse_logo) if ttk else tk.Button(logo_row, text="Selecionar...", command=browse_logo))
     logo_entry.pack(side=tk.LEFT, fill=tk.X, expand=True)
     logo_btn.pack(side=tk.LEFT, padx=6)
-    add_row(9, "Logo (opcional):", logo_row)
+    add_row(10, "Logo (opcional):", logo_row)
 
     logo_w_spin = (ttk.Spinbox(container, from_=0.5, to=20, increment=0.5, textvariable=v_logo_width, width=6) if ttk else tk.Spinbox(container, from_=0.5, to=20, increment=0.5, textvariable=v_logo_width, width=6))
-    add_row(10, "Logo largura (cm):", logo_w_spin)
+    add_row(11, "Logo largura (cm):", logo_w_spin)
 
     logo_m_spin = (ttk.Spinbox(container, from_=0.0, to=20, increment=0.5, textvariable=v_logo_margin, width=6) if ttk else tk.Spinbox(container, from_=0.0, to=20, increment=0.5, textvariable=v_logo_margin, width=6))
-    add_row(11, "Logo margem (cm):", logo_m_spin)
+    add_row(12, "Logo margem (cm):", logo_m_spin)
 
     # Separador para proteção
     sep_label = (ttk.Label(container, text="PROTEÇÃO DO DOCUMENTO", font=("TkDefaultFont", 9, "bold")) if ttk else tk.Label(container, text="PROTEÇÃO DO DOCUMENTO", font=("TkDefaultFont", 9, "bold")))
-    add_row(12, "", sep_label)
+    add_row(13, "", sep_label)
 
     # Campos de proteção
     password_row = (ttk.Frame(container) if ttk else tk.Frame(container))
@@ -346,19 +443,19 @@ def _run_gui_with_form(args: argparse.Namespace) -> int:
     password_entry.pack(side=tk.LEFT, padx=(0, 5))
     show_password_chk.pack(side=tk.LEFT, padx=(0, 5))
     save_password_chk.pack(side=tk.LEFT)
-    add_row(13, "Senha para edição:", password_row)
+    add_row(14, "Senha para edição:", password_row)
 
     protect_row = (ttk.Frame(container) if ttk else tk.Frame(container))
     restrict_chk = (ttk.Checkbutton(protect_row, text="Restringir edição", variable=v_restrict_editing) if ttk else tk.Checkbutton(protect_row, text="Restringir edição", variable=v_restrict_editing))
     no_copy_chk = (ttk.Checkbutton(protect_row, text="Desativar cópia", variable=v_no_copy) if ttk else tk.Checkbutton(protect_row, text="Desativar cópia", variable=v_no_copy))
     restrict_chk.pack(side=tk.LEFT, padx=6)
     no_copy_chk.pack(side=tk.LEFT, padx=6)
-    add_row(14, "Restrições:", protect_row)
+    add_row(15, "Restrições:", protect_row)
 
     encrypt_row = (ttk.Frame(container) if ttk else tk.Frame(container))
     encrypt_chk = (ttk.Checkbutton(encrypt_row, text="Criptografar todo o conteúdo", variable=v_encrypt_content) if ttk else tk.Checkbutton(encrypt_row, text="Criptografar todo o conteúdo", variable=v_encrypt_content))
     encrypt_chk.pack(side=tk.LEFT, padx=6)
-    add_row(15, "Criptografia:", encrypt_row)
+    add_row(16, "Criptografia:", encrypt_row)
 
     # Botões
     btn_row = (ttk.Frame(container) if ttk else tk.Frame(container))
@@ -366,11 +463,12 @@ def _run_gui_with_form(args: argparse.Namespace) -> int:
     quit_btn = (ttk.Button(btn_row, text="Sair", command=on_closing) if ttk else tk.Button(btn_row, text="Sair", command=on_closing))
     run_btn.pack(side=tk.LEFT)
     quit_btn.pack(side=tk.LEFT, padx=8)
-    add_row(16, "", btn_row)
+    add_row(17, "", btn_row)
 
     # Ajustes finais
     container.columnconfigure(1, weight=1)
     on_toggle_inplace()
+    toggle_custom_date()  # Aplicar estado inicial do seletor de data
     
     # Configurar protocolo de fechamento da janela
     root.protocol("WM_DELETE_WINDOW", on_closing)
@@ -431,7 +529,20 @@ def main(argv: list[str] | None = None) -> int:
         opts.logo_width_cm = args.logo_width_cm
     if args.logo_margin_cm is not None:
         opts.logo_margin_cm = args.logo_margin_cm
-    stamp_pdf(str(input_path), str(output_path), args.cidade, date.today(), opts)
+    
+    # Determinar a data a ser usada
+    if getattr(args, 'date', None):
+        try:
+            custom_date = datetime.strptime(args.date, "%d/%m/%Y").date()
+            if custom_date > date.today():
+                parser.error("A data não pode ser futura.")
+            use_date = custom_date
+        except ValueError:
+            parser.error("Formato de data inválido. Use DD/MM/AAAA")
+    else:
+        use_date = date.today()
+    
+    stamp_pdf(str(input_path), str(output_path), args.cidade, use_date, opts)
     print(f"PDF gerado: {output_path}")
     return 0
 
