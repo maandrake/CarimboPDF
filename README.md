@@ -297,6 +297,21 @@ Se a proteção falhar, o PDF é salvo sem proteção e uma mensagem de aviso é
 Remove-Item "$env:USERPROFILE\.data_hora_pdf\config.json"
 ```
 
+## 🧹 Manutenção do Repositório
+
+### Limpeza de Branches de PRs Fechados
+Para manter o repositório organizado, use o script de limpeza incluído:
+
+```cmd
+# Windows (fácil):
+scripts\Limpeza_Branches_PRs.cmd
+
+# Qualquer sistema:
+python scripts/cleanup_closed_pr_branches.py
+```
+
+**Importante:** GitHub não permite excluir Pull Requests (isso é intencional para auditoria). O script apenas limpa os branches associados. Veja [`GERENCIAMENTO_PRS.md`](GERENCIAMENTO_PRS.md) para detalhes completos.
+
 ## 🤝 Contribuição
 
 Este projeto é mantido para uso interno. Para sugestões ou problemas:
@@ -322,5 +337,6 @@ Projeto de uso interno - Marcos Despachante
 | 👁️ Mostrar/ocultar senha | ✅ | ❌ | Controle de visibilidade |
 | 🎯 Interface centralizada | ✅ | ❌ | Sem console, experiência limpa |
 | 🚀 Execução rápida | ✅ | ✅ | Duplo clique ou linha comando |
+| 🧹 Limpeza de branches | ❌ | ✅ | Manutenção do repositório |
 
 **Versão:** 2.0 - Atualizada em setembro de 2025
