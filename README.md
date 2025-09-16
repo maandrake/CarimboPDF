@@ -11,6 +11,7 @@ Utilitário profissional em Python para carimbar PDFs com cidade e data por exte
 - 💾 **Persistência automática** de todas as configurações
 - 👁️ **Controle de visibilidade** da senha com opção de salvar como padrão
 - 🎨 **Customização completa** de fonte, cor, posição e estilo
+- 📝 **✨ NOVO: Integração Word VBA** - Use CarimboPDF diretamente no Microsoft Word!
 
 ## 🚀 Execução Rápida
 
@@ -19,6 +20,13 @@ Utilitário profissional em Python para carimbar PDFs com cidade e data por exte
 ```
 Iniciar - Carimbar PDF (GUI).cmd
 ```
+
+### ✨ **NOVO: Integração com Microsoft Word VBA**
+**Configure uma vez e use sempre:**
+```cmd
+Configurar_Word_VBA.cmd
+```
+Depois use macros diretamente no Word! Ver [WORD_VBA_INTEGRATION.md](WORD_VBA_INTEGRATION.md)
 
 ### Alternativas:
 ```powershell
@@ -211,6 +219,55 @@ macOS:   /Users/usuario/.data_hora_pdf/config.json
 }
 ```
 
+## 📝 Integração com Microsoft Word VBA
+
+### 🚀 Configuração Rápida
+
+1. **Execute como administrador:**
+   ```cmd
+   Configurar_Word_VBA.cmd
+   ```
+
+2. **No Word: Alt+F11 → Arquivo → Importar:**
+   ```
+   CarimboPDF_WordIntegration.bas
+   ```
+
+3. **Pronto! Use as macros:**
+   ```vba
+   Sub MeuCarimbo()
+       Call CarimbarDocumentoSimples()
+   End Sub
+   ```
+
+### ✨ Funcionalidades VBA
+
+- ✅ **Conversão automática** Word → PDF → Carimbo
+- ✅ **Interface nativa VBA** com todas as opções
+- ✅ **Tratamento de erro robusto**
+- ✅ **Configuração flexível**
+
+### 📋 Exemplo Avançado
+
+```vba
+Sub CarimboPersonalizado()
+    Dim opcoes As CarimboOptions
+    
+    opcoes = CriarOpcoesPadrao()
+    opcoes.Cidade = "Rio de Janeiro"
+    opcoes.FonteSize = "16"
+    opcoes.Negrito = True
+    opcoes.Cor = "#0000FF"
+    opcoes.SenhaProtecao = "minhasenha"
+    opcoes.RestringirEdicao = True
+    
+    Call CarimbarDocumentoAtivo(opcoes)
+End Sub
+```
+
+### 📖 Documentação Completa
+Ver arquivo: **[WORD_VBA_INTEGRATION.md](WORD_VBA_INTEGRATION.md)**
+
 ## 🧪 Teste Rápido
 ### 1. Gerar PDF de exemplo:
 ```powershell
@@ -312,15 +369,16 @@ Projeto de uso interno - Marcos Despachante
 
 ## 📊 Resumo de Funcionalidades
 
-| Funcionalidade | GUI | CLI | Descrição |
-|----------------|-----|-----|-----------|
-| 📅 Carimbo data/cidade | ✅ | ✅ | Texto automático em português |
-| 🖼️ Logo personalizado | ✅ | ✅ | JPG/PNG redimensionado |
-| 🎨 Formatação completa | ✅ | ✅ | Fonte, cor, tamanho, estilo |
-| 🔐 Proteção com senha | ✅ | ✅ | Edição, cópia, criptografia |
-| 💾 Configurações salvas | ✅ | ❌ | Persistência automática |
-| 👁️ Mostrar/ocultar senha | ✅ | ❌ | Controle de visibilidade |
-| 🎯 Interface centralizada | ✅ | ❌ | Sem console, experiência limpa |
-| 🚀 Execução rápida | ✅ | ✅ | Duplo clique ou linha comando |
+| Funcionalidade | GUI | CLI | VBA | Descrição |
+|----------------|-----|-----|-----|-----------|
+| 📅 Carimbo data/cidade | ✅ | ✅ | ✅ | Texto automático em português |
+| 🖼️ Logo personalizado | ✅ | ✅ | ✅ | JPG/PNG redimensionado |
+| 🎨 Formatação completa | ✅ | ✅ | ✅ | Fonte, cor, tamanho, estilo |
+| 🔐 Proteção com senha | ✅ | ✅ | ✅ | Edição, cópia, criptografia |
+| 💾 Configurações salvas | ✅ | ❌ | ❌ | Persistência automática |
+| 👁️ Mostrar/ocultar senha | ✅ | ❌ | ❌ | Controle de visibilidade |
+| 🎯 Interface centralizada | ✅ | ❌ | ❌ | Sem console, experiência limpa |
+| 🚀 Execução rápida | ✅ | ✅ | ✅ | Duplo clique, linha comando ou macro |
+| 📝 Integração Word | ❌ | ❌ | ✅ | Conversão Word→PDF→Carimbo |
 
-**Versão:** 2.0 - Atualizada em setembro de 2025
+**Versão:** 2.1 - Atualizada em setembro de 2025 com integração Word VBA
