@@ -13,3 +13,5 @@ venv/
 # VS Code
 .vscode/
 .history/
+*.pdf
+test_files/
