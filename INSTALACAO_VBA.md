@@ -812,6 +812,220 @@ End Sub
 - **Próxima revisão:** Conforme necessário
 - **Controle de versão:** Manter backup antes de atualizações
 
+## 🔧 Solução de Problemas Comuns
+
+### Erro: "Método ou propriedade não suportada"
+**Causa:** Referências XML não habilitadas
+**Solução:**
+1. Alt + F11 → Ferramentas → Referências
+2. Marcar "Microsoft XML, v6.0"
+3. Reiniciar aplicação
+
+### Erro: "Acesso negado" ou "401 Unauthorized"
+**Causa:** Credenciais da API inválidas
+**Solução:**
+1. Verificar API_KEY no código
+2. Confirmar credenciais com provedor da API
+3. Verificar se a API não expirou
+
+### Erro: "Timeout da requisição"
+**Causa:** Conexão lenta ou servidor sobrecarregado
+**Solução:**
+1. Aumentar TIMEOUT_SEGUNDOS no código
+2. Implementar retry automático
+3. Verificar conexão de internet
+
+### Campos não preenchidos
+**Causa:** Nomes dos controles diferentes
+**Solução:**
+1. Verificar nomes exatos dos TextBox/ComboBox
+2. Ajustar nomes no código de preenchimento
+3. Usar Debug.Print para verificar valores
+
+### Performance lenta
+**Causa:** Muitas validações ou logs excessivos
+**Solução:**
+1. Desabilitar logs desnecessários
+2. Otimizar validações
+3. Usar Application.ScreenUpdating = False
+
+## 📚 Recursos Adicionais
+
+### Links Úteis
+- [Documentação API DETRAN](https://detran.gov.br/api-docs)
+- [VBA XML HTTP Reference](https://docs.microsoft.com/en-us/office/vba/)
+- [Formatação CPF/CNPJ Brasil](https://www.gov.br/pt-br/servicos/validar-cpf)
+
+### Exemplos de Integração
+```vba
+' Exemplo de uso em Access
+Private Sub btnConsultar_Click()
+    If ValidarDadosEntrada() Then
+        Dim resultado As ResultadoConsulta
+        resultado = ConsultarDetranPorPlaca(Me.txtPlaca.Value)
+        
+        If resultado.Sucesso Then
+            PreencherFormulario resultado
+        Else
+            MsgBox resultado.Mensagem, vbExclamation
+        End If
+    End If
+End Sub
+
+' Exemplo de uso em Excel
+Private Sub Worksheet_Change(ByVal Target As Range)
+    If Target.Address = "$B$1" Then ' Célula da placa
+        Application.EnableEvents = False
+        ConsultarEPreencherPlanilha Target.Value
+        Application.EnableEvents = True
+    End If
+End Sub
+```
+
+### Automação com Power Automate
+Para integração com Microsoft Power Automate, considere criar um Web Service adicional que encapsule esta funcionalidade VBA.
+
+### Exemplo Completo de Implementação
+```vba
+' ===================================
+' EXEMPLO COMPLETO - FORMULÁRIO COMPLETO
+' ===================================
+Private Sub UserForm_Initialize()
+    ' Configurar ComboBox de Estados
+    With ComboBoxEstadoVeículo
+        .AddItem "AC" : .AddItem "AL" : .AddItem "AP" : .AddItem "AM"
+        .AddItem "BA" : .AddItem "CE" : .AddItem "DF" : .AddItem "ES"
+        .AddItem "GO" : .AddItem "MA" : .AddItem "MT" : .AddItem "MS"
+        .AddItem "MG" : .AddItem "PA" : .AddItem "PB" : .AddItem "PR"
+        .AddItem "PE" : .AddItem "PI" : .AddItem "RJ" : .AddItem "RN"
+        .AddItem "RS" : .AddItem "RO" : .AddItem "RR" : .AddItem "SC"
+        .AddItem "SP" : .AddItem "SE" : .AddItem "TO"
+    End With
+    
+    With ComboBoxEstado
+        .AddItem "AC" : .AddItem "AL" : .AddItem "AP" : .AddItem "AM"
+        .AddItem "BA" : .AddItem "CE" : .AddItem "DF" : .AddItem "ES"
+        .AddItem "GO" : .AddItem "MA" : .AddItem "MT" : .AddItem "MS"
+        .AddItem "MG" : .AddItem "PA" : .AddItem "PB" : .AddItem "PR"
+        .AddItem "PE" : .AddItem "PI" : .AddItem "RJ" : .AddItem "RN"
+        .AddItem "RS" : .AddItem "RO" : .AddItem "RR" : .AddItem "SC"
+        .AddItem "SP" : .AddItem "SE" : .AddItem "TO"
+    End With
+End Sub
+
+' Implementação específica conforme solicitado
+Private Sub CommandButtonConsultaDetran_Click()
+    Dim placa As String
+    Dim resultado As ResultadoConsulta
+    
+    ' IMPORTANTE: Conforme especificado, pegar placa da TextBoxMarcaModelo
+    ' (Este campo parece incorreto para placa, mas seguindo especificação)
+    placa = Trim(TextBoxMarcaModelo.Value)
+    
+    If Len(placa) = 0 Then
+        MsgBox "Informe a placa do veículo no campo Marca/Modelo", vbExclamation
+        TextBoxMarcaModelo.SetFocus
+        Exit Sub
+    End If
+    
+    ' Desabilitar interface durante consulta
+    Me.Enabled = False
+    CommandButtonConsultaDetran.Caption = "Consultando..."
+    DoEvents
+    
+    ' Executar consulta
+    resultado = ConsultarDetranPorPlaca(placa)
+    
+    If resultado.Sucesso Then
+        ' Mapeamento EXATO conforme especificação do problema:
+        
+        ' 1. Dados do Veículo (#divDadosVeiculo)
+        TextBoxChassi.Value = resultado.Veiculo.Chassi
+        TextBoxRenavam.Value = resultado.Veiculo.Renavam
+        ' TextBoxMarcaModelo já contém a placa, vamos manter ou atualizar:
+        TextBoxMarcaModelo.Value = resultado.Veiculo.MarcaModelo ' ou manter placa
+        TextBoxFabricaçãoModelo.Value = resultado.Veiculo.AnoFabricacao
+        ' "Ano Modelo/Modelo: Ano do modelo" - interpretando como campo adicional
+        TextBoxCor.Value = resultado.Veiculo.Cor
+        TextBoxCombustível.Value = resultado.Veiculo.Combustivel
+        TextBoxCidadeVeículo.Value = resultado.Veiculo.Municipio
+        ComboBoxEstadoVeículo.Value = resultado.Veiculo.UF
+        
+        ' 2. Dados do Proprietário/Condutor
+        TextBoxOutorgante.Value = resultado.Proprietario.Nome
+        TextBoxCPF.Value = FormatarCpfCnpj(resultado.Proprietario.CpfCnpj)
+        
+        ' Endereço completo separado conforme especificado:
+        TextBoxCEP.Value = FormatarCep(resultado.Proprietario.Cep)
+        TextBoxEndereço.Value = resultado.Proprietario.Endereco
+        TextBoxNumero.Value = resultado.Proprietario.Numero
+        TextBoxComplemento.Value = resultado.Proprietario.Complemento
+        TextBoxBairro.Value = resultado.Proprietario.Bairro
+        TextBoxCidade.Value = resultado.Proprietario.Cidade
+        ComboBoxEstado.Value = resultado.Proprietario.Estado
+        
+        ' Log da consulta bem-sucedida
+        LogConsulta placa, True, "Dados preenchidos com sucesso"
+        
+        MsgBox "Consulta DETRAN realizada com sucesso!" & vbCrLf & _
+               "Todos os campos foram preenchidos automaticamente.", _
+               vbInformation, "Consulta DETRAN"
+    Else
+        ' Log da consulta com erro
+        LogConsulta placa, False, resultado.Mensagem
+        
+        MsgBox "Erro na consulta DETRAN:" & vbCrLf & vbCrLf & _
+               resultado.Mensagem, vbCritical, "Erro - Consulta DETRAN"
+    End If
+    
+    ' Reabilitar interface
+    Me.Enabled = True
+    CommandButtonConsultaDetran.Caption = "Consultar DETRAN"
+End Sub
+
+' Função para limpar todos os campos antes de nova consulta
+Private Sub btnLimparCampos_Click()
+    ' Limpar dados do veículo
+    TextBoxChassi.Value = ""
+    TextBoxRenavam.Value = ""
+    TextBoxMarcaModelo.Value = ""
+    TextBoxFabricaçãoModelo.Value = ""
+    TextBoxCor.Value = ""
+    TextBoxCombustível.Value = ""
+    TextBoxCidadeVeículo.Value = ""
+    ComboBoxEstadoVeículo.Value = ""
+    
+    ' Limpar dados do proprietário
+    TextBoxOutorgante.Value = ""
+    TextBoxCPF.Value = ""
+    TextBoxCEP.Value = ""
+    TextBoxEndereço.Value = ""
+    TextBoxNumero.Value = ""
+    TextBoxComplemento.Value = ""
+    TextBoxBairro.Value = ""
+    TextBoxCidade.Value = ""
+    ComboBoxEstado.Value = ""
+    
+    TextBoxMarcaModelo.SetFocus
+End Sub
+```
+
+---
+
+## 📝 Histórico de Versões
+
+| Versão | Data | Alterações |
+|--------|------|------------|
+| 1.0 | Set/2025 | Versão inicial com todas as funcionalidades |
+| | | - Consulta básica DETRAN |
+| | | - Mapeamento de campos completo |
+| | | - Validações e tratamento de erros |
+| | | - Sistema de logs |
+| | | - Documentação completa |
+
 ---
 
 *Documento criado em setembro de 2025 - Módulo de Consulta DETRAN VBA v1.0*
+
+**Desenvolvido para integração com sistemas VBA brasileiros**  
+**Compatível com Office 2010+ | Requer conexão internet | Seguir diretrizes LGPD**
