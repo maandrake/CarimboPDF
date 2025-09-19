@@ -8,8 +8,19 @@ __pycache__/
 .venv/
 venv/
 .env
-.DS_Store
 
 # VS Code
 .vscode/
 .history/
+
+# CarimboPDF specific
+*.pdf
+logs/
+test_*.txt
+test_*.json
+test_*.pdf
+.coverage
+.pytest_cache/
+
+# macOS
+.DS_Store

@@ -113,6 +113,9 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--encrypt-content", action="store_true", help="Criptografar todo o conteúdo do documento")
     # Data personalizada
     p.add_argument("--date", help="Data personalizada no formato DD/MM/AAAA (não pode ser futura)")
+    # VBA Integration
+    p.add_argument("--vba-api", action="store_true", help="Iniciar servidor de API para integração VBA")
+    p.add_argument("--vba-port", type=int, default=8080, help="Porta do servidor VBA (padrão: 8080)")
     return p
 
 
@@ -488,6 +491,26 @@ def _run_gui_with_form(args: argparse.Namespace) -> int:
 def main(argv: list[str] | None = None) -> int:
     parser = build_parser()
     args = parser.parse_args(argv)
+
+    # VBA API mode
+    if getattr(args, 'vba_api', False):
+        try:
+            from .vba_integration import VBAIntegrationAPI
+            print(f"Iniciando servidor de API VBA na porta {args.vba_port}")
+            print("Para parar o servidor, pressione Ctrl+C")
+            print("Teste de conectividade: curl http://127.0.0.1:{}/health".format(args.vba_port))
+            api = VBAIntegrationAPI(args.vba_port)
+            api.run(debug=False)
+            return 0
+        except ImportError:
+            print("Erro: Flask não está instalado. Execute: pip install flask")
+            return 1
+        except KeyboardInterrupt:
+            print("\nServidor VBA API encerrado pelo usuário.")
+            return 0
+        except Exception as e:
+            print(f"Erro ao iniciar servidor VBA API: {e}")
+            return 1
 
     # Modo GUI por padrão se nenhum argumento específico for fornecido
     # ou se --gui foi especificado explicitamente
