@@ -8,6 +8,10 @@ from .stamper import StampOptions, stamp_pdf
 import tkinter as tk
 from tkinter import filedialog, messagebox
 try:
+    import tkinter.font as tkfont  # type: ignore
+except Exception:
+    tkfont = None
+try:
     from tkinter import ttk  # type: ignore
 except Exception:
     ttk = None
@@ -51,14 +55,15 @@ def _save_config(config: dict) -> None:
 
 def _hide_console() -> None:
     """Oculta o console do Windows se estiver rodando em Windows."""
+    if sys.platform != "win32":
+        return
     try:
         import ctypes
-        if sys.platform == "win32":
-            # Obter o handle da janela do console
-            hwnd = ctypes.windll.kernel32.GetConsoleWindow()
-            if hwnd != 0:
-                # Ocultar a janela do console
-                ctypes.windll.user32.ShowWindow(hwnd, 0)
+
+        hwnd = ctypes.windll.kernel32.GetConsoleWindow()
+        if hwnd:
+            ctypes.windll.user32.ShowWindow(hwnd, 0)  # SW_HIDE
+            ctypes.windll.kernel32.FreeConsole()
     except Exception:
         pass  # Se não conseguir ocultar, continua normalmente
 
@@ -113,6 +118,9 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--encrypt-content", action="store_true", help="Criptografar todo o conteúdo do documento")
     # Data personalizada
     p.add_argument("--date", help="Data personalizada no formato DD/MM/AAAA (não pode ser futura)")
+    # Controle de carimbo
+    p.add_argument("--no-city", action="store_true", help="Não carimbar a linha da cidade")
+    p.add_argument("--no-date", action="store_true", help="Não carimbar a linha da data")
     return p
 
 
@@ -125,6 +133,57 @@ def _run_gui_with_form(args: argparse.Namespace) -> int:
 
     root = tk.Tk()
     root.title("Carimbar PDF - Formulário")
+
+    # Mapear famílias de fonte com apoio do tkfont
+    available_families: set[str] = set()
+    if tkfont is not None:
+        try:
+            available_families = {name for name in tkfont.families(root)}
+        except Exception:
+            available_families = set()
+
+    font_candidates: list[tuple[str, str, tuple[str, ...]]] = [
+        ("helv", "Sans Serif (Helvetica / Arial)", ("Helvetica", "Arial", "Liberation Sans", "DejaVu Sans")),
+        ("times", "Serif (Times New Roman)", ("Times New Roman", "Times", "Liberation Serif", "DejaVu Serif")),
+        ("cour", "Monoespaçado (Courier)", ("Courier New", "Courier", "Liberation Mono", "DejaVu Sans Mono")),
+    ]
+
+    def resolve_font_key(raw: str | None) -> str:
+        aliases = {
+            "helv": "helv",
+            "helvb": "helv",
+            "helvi": "helv",
+            "helvbi": "helv",
+            "helvetica": "helv",
+            "arial": "helv",
+            "sans": "helv",
+            "times": "times",
+            "timesb": "times",
+            "timesi": "times",
+            "timesbi": "times",
+            "timesnewroman": "times",
+            "serif": "times",
+            "cour": "cour",
+            "courb": "cour",
+            "couri": "cour",
+            "courbi": "cour",
+            "courier": "cour",
+            "couriernew": "cour",
+            "monospace": "cour",
+        }
+        if not raw:
+            return "helv"
+        normalized = raw.lower().replace(" ", "")
+        return aliases.get(normalized, "helv")
+
+    font_ui_data: dict[str, dict[str, str]] = {}
+    font_labels: list[str] = []
+    label_to_key: dict[str, str] = {}
+    for key, label, family_candidates in font_candidates:
+        preview_family = next((fam for fam in family_candidates if fam in available_families), family_candidates[0])
+        font_ui_data[key] = {"label": label, "preview_family": preview_family}
+        font_labels.append(label)
+        label_to_key[label] = key
     
     # Configurar ícone da janela se possível
     try:
@@ -148,9 +207,22 @@ def _run_gui_with_form(args: argparse.Namespace) -> int:
     v_inplace = tk.BooleanVar(value=saved_config.get("inplace", True if not args.output else False))
     v_output = tk.StringVar(value=args.output or "")
     v_cidade = tk.StringVar(value=cidade_default)
+    stamp_city_default = saved_config.get("stamp_city")
+    if stamp_city_default is None:
+        stamp_city_default = not getattr(args, "no_city", False)
+    stamp_date_default = saved_config.get("stamp_date")
+    if stamp_date_default is None:
+        stamp_date_default = not getattr(args, "no_date", False)
+    v_stamp_city = tk.BooleanVar(value=bool(stamp_city_default))
+    v_stamp_date = tk.BooleanVar(value=bool(stamp_date_default))
     v_page = tk.IntVar(value=saved_config.get("page", args.page or 0))
     v_fontsize = tk.DoubleVar(value=saved_config.get("font_size", args.font_size or 12.0))
-    v_font = tk.StringVar(value=saved_config.get("font", args.font or "helv"))
+    initial_font_raw = saved_config.get("font", args.font or defaults.font)
+    initial_font_key = resolve_font_key(initial_font_raw)
+    if initial_font_key not in font_ui_data:
+        initial_font_key = "helv"
+    v_font = tk.StringVar(value=initial_font_key)
+    v_font_label = tk.StringVar(value=font_ui_data[v_font.get()]["label"])
     v_color = tk.StringVar(value=saved_config.get("color", args.color or "#000000"))
     v_bold = tk.BooleanVar(value=saved_config.get("bold", bool(args.bold)))
     v_logo_path = tk.StringVar(value=saved_config.get("logo_path", args.logo_path or ""))
@@ -238,7 +310,9 @@ def _run_gui_with_form(args: argparse.Namespace) -> int:
             "no_copy": v_no_copy.get(),
             "encrypt_content": v_encrypt_content.get(),
             "save_password": v_save_password.get(),
-            "use_custom_date": v_use_custom_date.get(),
+            "stamp_city": v_stamp_city.get(),
+            "stamp_date": v_stamp_date.get(),
+            "use_custom_date": v_use_custom_date.get() if v_stamp_date.get() else False,
         }
         
         # Salvar senha apenas se a opção estiver marcada
@@ -246,7 +320,7 @@ def _run_gui_with_form(args: argparse.Namespace) -> int:
             config["protection_password"] = v_protection_password.get()
             
         # Salvar data personalizada se estiver sendo usada
-        if v_use_custom_date.get():
+        if v_stamp_date.get() and v_use_custom_date.get():
             try:
                 if HAS_CALENDAR and hasattr(date_entry, 'get_date'):
                     selected_date = date_entry.get_date()
@@ -292,6 +366,8 @@ def _run_gui_with_form(args: argparse.Namespace) -> int:
                 restrict_editing=bool(v_restrict_editing.get()),
                 allow_copy=not bool(v_no_copy.get()),  # Invertido: no_copy -> allow_copy
                 encrypt_content=bool(v_encrypt_content.get()),
+                stamp_city=bool(v_stamp_city.get()),
+                stamp_date=bool(v_stamp_date.get()),
             )
             # aplicar parâmetros de logo se informados
             lw = float(v_logo_width.get())
@@ -361,8 +437,15 @@ def _run_gui_with_form(args: argparse.Namespace) -> int:
     cidade_entry = (ttk.Entry(container, textvariable=v_cidade) if ttk else tk.Entry(container, textvariable=v_cidade))
     add_row(3, "Cidade:", cidade_entry)
 
+    stamp_row = (ttk.Frame(container) if ttk else tk.Frame(container))
+    stamp_city_chk = (ttk.Checkbutton(stamp_row, text="Carimbar cidade", variable=v_stamp_city) if ttk else tk.Checkbutton(stamp_row, text="Carimbar cidade", variable=v_stamp_city))
+    stamp_date_chk = (ttk.Checkbutton(stamp_row, text="Carimbar data", variable=v_stamp_date) if ttk else tk.Checkbutton(stamp_row, text="Carimbar data", variable=v_stamp_date))
+    stamp_city_chk.pack(side=tk.LEFT, padx=(0, 10))
+    stamp_date_chk.pack(side=tk.LEFT)
+    add_row(4, "Linhas:", stamp_row)
+
     page_spin = (ttk.Spinbox(container, from_=0, to=9999, textvariable=v_page, width=6) if ttk else tk.Spinbox(container, from_=0, to=9999, textvariable=v_page, width=6))
-    add_row(4, "Página (0=1ª):", page_spin)
+    add_row(5, "Página (0=1ª):", page_spin)
 
     # Data personalizada
     date_row = (ttk.Frame(container) if ttk else tk.Frame(container))
@@ -388,33 +471,85 @@ def _run_gui_with_form(args: argparse.Namespace) -> int:
     
     use_custom_chk.pack(side=tk.LEFT, padx=(0, 5))
     date_entry.pack(side=tk.LEFT)
-    add_row(5, "", date_row)
+    add_row(6, "", date_row)
     
     # Redefinir a função toggle_custom_date agora que os widgets foram criados
     def toggle_custom_date():
         """Habilita/desabilita o seletor de data."""
+        if not v_stamp_date.get():
+            v_use_custom_date.set(False)
+            use_custom_chk.configure(state="disabled")
+            date_entry.configure(state="disabled")
+            return
+
+        use_custom_chk.configure(state="normal")
         if v_use_custom_date.get():
             date_entry.configure(state="normal")
         else:
             date_entry.configure(state="disabled")
 
+    def on_toggle_stamp_city():
+        estado = "normal" if v_stamp_city.get() else "disabled"
+        cidade_entry.configure(state=estado)
+
+    def on_toggle_stamp_date():
+        if not v_stamp_date.get():
+            v_use_custom_date.set(False)
+        toggle_custom_date()
+
+    stamp_city_chk.configure(command=on_toggle_stamp_city)
+    stamp_date_chk.configure(command=on_toggle_stamp_date)
+    use_custom_chk.configure(command=toggle_custom_date)
+
     fontsize_spin = (ttk.Spinbox(container, from_=6, to=72, increment=0.5, textvariable=v_fontsize, width=6) if ttk else tk.Spinbox(container, from_=6, to=72, increment=0.5, textvariable=v_fontsize, width=6))
-    add_row(6, "Tamanho fonte:", fontsize_spin)
+    add_row(7, "Tamanho fonte:", fontsize_spin)
 
     font_row = (ttk.Frame(container) if ttk else tk.Frame(container))
-    font_entry = (ttk.Combobox(font_row, textvariable=v_font, values=["helv","times","cour"], width=10) if ttk else tk.Entry(font_row, textvariable=v_font, width=12))
-    font_entry.pack(side=tk.LEFT)
-    add_row(7, "Fonte:", font_row)
+    preview_font_obj = tkfont.Font(root=root, family=font_ui_data[v_font.get()]["preview_family"], size=14) if tkfont else None
+
+    def update_font_preview(*_args):
+        if preview_font_obj is None:
+            return
+        key = v_font.get()
+        data = font_ui_data.get(key, font_ui_data["helv"])
+        weight = "bold" if v_bold.get() else "normal"
+        slant = "italic" if v_italic.get() else "roman"
+        try:
+            preview_font_obj.configure(family=data["preview_family"], weight=weight, slant=slant)
+        except Exception:
+            preview_font_obj.configure(weight=weight, slant=slant)
+
+    def on_font_selected(_event: object | None = None) -> None:
+        label = v_font_label.get()
+        key = label_to_key.get(label, "helv")
+        v_font.set(key)
+        update_font_preview()
+
+    if ttk:
+        font_selector = ttk.Combobox(font_row, textvariable=v_font_label, values=font_labels, state="readonly", width=28)
+        font_selector.bind("<<ComboboxSelected>>", on_font_selected)
+    else:
+        font_selector = tk.OptionMenu(font_row, v_font_label, *font_labels, command=lambda _value: on_font_selected(None))
+
+    font_selector.pack(side=tk.LEFT, fill=tk.X, expand=True)
+    preview_font_for_label = preview_font_obj if preview_font_obj is not None else ("TkDefaultFont", 12)
+    font_preview_label = (ttk.Label(font_row, text="AaBbCc", font=preview_font_for_label) if ttk else tk.Label(font_row, text="AaBbCc", font=preview_font_for_label))
+    font_preview_label.pack(side=tk.LEFT, padx=8)
+    add_row(8, "Fonte:", font_row)
 
     color_entry = (ttk.Entry(container, textvariable=v_color) if ttk else tk.Entry(container, textvariable=v_color))
-    add_row(8, "Cor (HEX):", color_entry)
+    add_row(9, "Cor (HEX):", color_entry)
 
     style_row = (ttk.Frame(container) if ttk else tk.Frame(container))
     bold_chk = (ttk.Checkbutton(style_row, text="Negrito", variable=v_bold) if ttk else tk.Checkbutton(style_row, text="Negrito", variable=v_bold))
     italic_chk = (ttk.Checkbutton(style_row, text="Itálico", variable=v_italic) if ttk else tk.Checkbutton(style_row, text="Itálico", variable=v_italic))
     bold_chk.pack(side=tk.LEFT, padx=6)
     italic_chk.pack(side=tk.LEFT, padx=6)
-    add_row(9, "Estilo:", style_row)
+    add_row(10, "Estilo:", style_row)
+
+    if preview_font_obj is not None:
+        v_bold.trace_add("write", lambda *_args: update_font_preview())
+        v_italic.trace_add("write", lambda *_args: update_font_preview())
 
     # Logo
     logo_row = (ttk.Frame(container) if ttk else tk.Frame(container))
@@ -422,17 +557,17 @@ def _run_gui_with_form(args: argparse.Namespace) -> int:
     logo_btn = (ttk.Button(logo_row, text="Selecionar...", command=browse_logo) if ttk else tk.Button(logo_row, text="Selecionar...", command=browse_logo))
     logo_entry.pack(side=tk.LEFT, fill=tk.X, expand=True)
     logo_btn.pack(side=tk.LEFT, padx=6)
-    add_row(10, "Logo (opcional):", logo_row)
+    add_row(11, "Logo (opcional):", logo_row)
 
     logo_w_spin = (ttk.Spinbox(container, from_=0.5, to=20, increment=0.5, textvariable=v_logo_width, width=6) if ttk else tk.Spinbox(container, from_=0.5, to=20, increment=0.5, textvariable=v_logo_width, width=6))
-    add_row(11, "Logo largura (cm):", logo_w_spin)
+    add_row(12, "Logo largura (cm):", logo_w_spin)
 
     logo_m_spin = (ttk.Spinbox(container, from_=0.0, to=20, increment=0.5, textvariable=v_logo_margin, width=6) if ttk else tk.Spinbox(container, from_=0.0, to=20, increment=0.5, textvariable=v_logo_margin, width=6))
-    add_row(12, "Logo margem (cm):", logo_m_spin)
+    add_row(13, "Logo margem (cm):", logo_m_spin)
 
     # Separador para proteção
     sep_label = (ttk.Label(container, text="PROTEÇÃO DO DOCUMENTO", font=("TkDefaultFont", 9, "bold")) if ttk else tk.Label(container, text="PROTEÇÃO DO DOCUMENTO", font=("TkDefaultFont", 9, "bold")))
-    add_row(13, "", sep_label)
+    add_row(14, "", sep_label)
 
     # Campos de proteção
     password_row = (ttk.Frame(container) if ttk else tk.Frame(container))
@@ -443,19 +578,19 @@ def _run_gui_with_form(args: argparse.Namespace) -> int:
     password_entry.pack(side=tk.LEFT, padx=(0, 5))
     show_password_chk.pack(side=tk.LEFT, padx=(0, 5))
     save_password_chk.pack(side=tk.LEFT)
-    add_row(14, "Senha para edição:", password_row)
+    add_row(15, "Senha para edição:", password_row)
 
     protect_row = (ttk.Frame(container) if ttk else tk.Frame(container))
     restrict_chk = (ttk.Checkbutton(protect_row, text="Restringir edição", variable=v_restrict_editing) if ttk else tk.Checkbutton(protect_row, text="Restringir edição", variable=v_restrict_editing))
     no_copy_chk = (ttk.Checkbutton(protect_row, text="Desativar cópia", variable=v_no_copy) if ttk else tk.Checkbutton(protect_row, text="Desativar cópia", variable=v_no_copy))
     restrict_chk.pack(side=tk.LEFT, padx=6)
     no_copy_chk.pack(side=tk.LEFT, padx=6)
-    add_row(15, "Restrições:", protect_row)
+    add_row(16, "Restrições:", protect_row)
 
     encrypt_row = (ttk.Frame(container) if ttk else tk.Frame(container))
     encrypt_chk = (ttk.Checkbutton(encrypt_row, text="Criptografar todo o conteúdo", variable=v_encrypt_content) if ttk else tk.Checkbutton(encrypt_row, text="Criptografar todo o conteúdo", variable=v_encrypt_content))
     encrypt_chk.pack(side=tk.LEFT, padx=6)
-    add_row(16, "Criptografia:", encrypt_row)
+    add_row(17, "Criptografia:", encrypt_row)
 
     # Botões
     btn_row = (ttk.Frame(container) if ttk else tk.Frame(container))
@@ -463,12 +598,14 @@ def _run_gui_with_form(args: argparse.Namespace) -> int:
     quit_btn = (ttk.Button(btn_row, text="Sair", command=on_closing) if ttk else tk.Button(btn_row, text="Sair", command=on_closing))
     run_btn.pack(side=tk.LEFT)
     quit_btn.pack(side=tk.LEFT, padx=8)
-    add_row(17, "", btn_row)
+    add_row(18, "", btn_row)
 
     # Ajustes finais
     container.columnconfigure(1, weight=1)
+    update_font_preview()
     on_toggle_inplace()
-    toggle_custom_date()  # Aplicar estado inicial do seletor de data
+    on_toggle_stamp_city()
+    on_toggle_stamp_date()  # já aciona toggle_custom_date internamente
     
     # Configurar protocolo de fechamento da janela
     root.protocol("WM_DELETE_WINDOW", on_closing)
@@ -501,8 +638,13 @@ def main(argv: list[str] | None = None) -> int:
         return _run_gui_with_form(args)
 
     # Modo CLI tradicional (sem GUI)
-    if not args.input or (not args.output and not args.in_place) or not args.cidade:
-        parser.error("Parâmetros obrigatórios ausentes: --input, (--output ou --in-place) e --cidade.")
+    stamp_city = not getattr(args, "no_city", False)
+    stamp_date = not getattr(args, "no_date", False)
+
+    if not args.input or (not args.output and not args.in_place):
+        parser.error("Parâmetros obrigatórios ausentes: --input e (--output ou --in-place).")
+    if stamp_city and not args.cidade:
+        parser.error("Informe --cidade ou utilize --no-city para não carimbar a linha da cidade.")
 
     input_path = Path(args.input)
     output_path = Path(args.input) if args.in_place else Path(args.output)
@@ -524,6 +666,8 @@ def main(argv: list[str] | None = None) -> int:
         restrict_editing=getattr(args, "restrict_editing", False),
         allow_copy=not getattr(args, "no_copy", False),  # Invertido
         encrypt_content=getattr(args, "encrypt_content", False),
+        stamp_city=stamp_city,
+        stamp_date=stamp_date,
     )
     if args.logo_width_cm is not None:
         opts.logo_width_cm = args.logo_width_cm
@@ -542,7 +686,8 @@ def main(argv: list[str] | None = None) -> int:
     else:
         use_date = date.today()
     
-    stamp_pdf(str(input_path), str(output_path), args.cidade, use_date, opts)
+    cidade_cli = args.cidade or ""
+    stamp_pdf(str(input_path), str(output_path), cidade_cli, use_date, opts)
     print(f"PDF gerado: {output_path}")
     return 0
 

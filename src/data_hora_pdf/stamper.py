@@ -28,6 +28,9 @@ class StampOptions:
     restrict_editing: bool = False  # Restringir edição do documento
     allow_copy: bool = True  # Permitir copiar texto
     encrypt_content: bool = False  # Criptografar todo o conteúdo
+    # Controle de carimbo
+    stamp_city: bool = True
+    stamp_date: bool = True
 
 
 def _month_name_pt(month: int) -> str:
@@ -64,6 +67,33 @@ def _parse_hex_color(hex_color: str):
     return (r, g, b)
 
 
+def _resolve_pdf_font_name(base: str, bold: bool, italic: bool) -> str:
+    base_normalized = base.lower().strip() or "helv"
+    font_map = {
+        "helv": {
+            (False, False): "Helvetica",
+            (True, False): "Helvetica-Bold",
+            (False, True): "Helvetica-Oblique",
+            (True, True): "Helvetica-BoldOblique",
+        },
+        "times": {
+            (False, False): "Times-Roman",
+            (True, False): "Times-Bold",
+            (False, True): "Times-Italic",
+            (True, True): "Times-BoldItalic",
+        },
+        "cour": {
+            (False, False): "Courier",
+            (True, False): "Courier-Bold",
+            (False, True): "Courier-Oblique",
+            (True, True): "Courier-BoldOblique",
+        },
+    }
+    font_name = font_map.get(base_normalized, {}).get((bold, italic))
+    if font_name:
+        return font_name
+    return base_normalized
+
 
 
 def stamp_pdf(
@@ -89,6 +119,11 @@ def stamp_pdf(
     # Duas linhas: 1) cidade  2) data por extenso
     linha1 = f"{cidade}".upper()
     linha2 = f"{data_por_extenso(d)}.".upper()
+    linhas_ativas: list[tuple[str, str]] = []
+    if options.stamp_city:
+        linhas_ativas.append(("city", linha1))
+    if options.stamp_date:
+        linhas_ativas.append(("date", linha2))
 
     doc = fitz.open(input_pdf)
     replace_plan: tuple[Path, Path] | None = None
@@ -98,20 +133,8 @@ def stamp_pdf(
         page = doc[options.page]
 
         # Definir posição padrão/atributos
-        base = (options.font or "helv").lower()
-        # Seleção de estilo: "", "B", "I", "BI"
-        style = ("BI" if (options.bold and options.italic) else ("B" if options.bold else ("I" if options.italic else "")))
-        if base in ("helv", "times", "cour"):
-            if style == "BI":
-                fontname = f"{base}BI"
-            elif style == "B":
-                fontname = f"{base}B"
-            elif style == "I":
-                fontname = f"{base}I"
-            else:
-                fontname = base
-        else:
-            fontname = base  # usa como informado
+        fontname = _resolve_pdf_font_name(options.font or "helv", options.bold, options.italic)
+        used_font = fontname
         fontsize = options.font_size
         color = _parse_hex_color(options.color)
 
@@ -121,7 +144,8 @@ def stamp_pdf(
             w1 = fitz.get_text_length(linha1, fontname=fontname, fontsize=fontsize)
             w2 = fitz.get_text_length(linha2, fontname=fontname, fontsize=fontsize)
         except Exception:
-            fontname = "helv"  # fallback
+            fontname = _resolve_pdf_font_name("helv", options.bold, options.italic)
+            used_font = fontname
             w1 = fitz.get_text_length(linha1, fontname=fontname, fontsize=fontsize)
             w2 = fitz.get_text_length(linha2, fontname=fontname, fontsize=fontsize)
         leading = fontsize * 1.2  # espaçamento entre linhas (aprox.)
@@ -132,42 +156,45 @@ def stamp_pdf(
     # - X é a posição absoluta do início do texto (alinhado à esquerda).
 
         # Padrão: posições fixas em pt se x/y não forem informados.
+        lines_to_draw: list[tuple[str, float, float]] = []
         if options.x is None and options.y is None:
-            # Cidade
-            x1 = 337
-            y1 = 280
-            # Data
-            x2 = 391
-            y2 = 307
+            default_coords = {
+                "city": (337.0, 280.0),
+                "date": (391.0, 307.0),
+            }
+            for kind, text in linhas_ativas:
+                x_def, y_def = default_coords.get(kind, (337.0, 280.0))
+                lines_to_draw.append((text, x_def, y_def))
         else:
-            # X explícito: usar como início do texto para ambas as linhas
             x_base = options.x if options.x is not None else options.margin
-            x1 = x_base
-            x2 = x_base
+            y_base = options.y if options.y is not None else (height - options.margin)
+            temp: list[tuple[str, float, float]] = []
+            y_cursor = y_base
+            for kind, text in reversed(linhas_ativas):
+                temp.append((text, x_base, y_cursor))
+                y_cursor -= leading
+            lines_to_draw = list(reversed(temp))
 
-            # Calcular Y: tratamos y (quando fornecido) como a linha de base da segunda linha (data)
-            if options.y is None:
-                y2 = height - options.margin
-                y1 = y2 - leading
-            else:
-                y2 = options.y
-                y1 = y2 - leading
-
-        # Desenhar linhas (com fallback de fonte)
-        try:
-            page.insert_text((x1, y1), linha1, fontsize=fontsize, fontname=fontname, fill=color, render_mode=0)
-            page.insert_text((x2, y2), linha2, fontsize=fontsize, fontname=fontname, fill=color, render_mode=0)
-            used_font = fontname
-        except Exception:
-            page.insert_text((x1, y1), linha1, fontsize=fontsize, fontname="helv", fill=color, render_mode=0)
-            page.insert_text((x2, y2), linha2, fontsize=fontsize, fontname="helv", fill=color, render_mode=0)
-            used_font = "helv"
-
-        # Log simples para depuração
-        try:
-            print(f"[data-hora-pdf] Fonte efetiva: {used_font} | bold={options.bold} | italic={options.italic}")
-        except Exception:
-            pass
+        used_font = fontname
+        if not lines_to_draw:
+            try:
+                print("[data-hora-pdf] Aviso: Nenhum texto carimbado (cidade/data desativadas).")
+            except Exception:
+                pass
+        else:
+            current_font = fontname
+            for text, x_pos, y_pos in lines_to_draw:
+                try:
+                    page.insert_text((x_pos, y_pos), text, fontsize=fontsize, fontname=current_font, fill=color, render_mode=0)
+                except Exception:
+                    current_font = _resolve_pdf_font_name("helv", options.bold, options.italic)
+                    used_font = current_font
+                    page.insert_text((x_pos, y_pos), text, fontsize=fontsize, fontname=current_font, fill=color, render_mode=0)
+            # Log simples para depuração
+            try:
+                print(f"[data-hora-pdf] Fonte efetiva: {used_font} | bold={options.bold} | italic={options.italic}")
+            except Exception:
+                pass
 
         # Inserir logo no canto inferior esquerdo, se disponível
         def _resolve_logo_path() -> Path | None:
