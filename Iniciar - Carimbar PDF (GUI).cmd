@@ -28,6 +28,18 @@ rem --- 4) garantir dependências ---
 "%PYTHON%" -m pip install -r "%ROOT%requirements.txt" || goto pip_failed
 
 :run_gui
+set "PYTHONPATH=%ROOT%src"
+call :log "Usando venv pythonw" "%PYTHONW%"
+start "CarimboPDF" "%PYTHONW%" "%ROOT%CarimboPDF_GUI.pyw"
+exit /b 0
+
+:run_gui_py
+set "PYTHONPATH=%ROOT%src"
+call :log "Usando venv python" "%PYTHON%"
+start "CarimboPDF" "%PYTHON%" "%ROOT%CarimboPDF_GUI.pyw"
+exit /b 0
+
+:find_python
 rem --- procurar primeiro no perfil atual (evita capturar caminhos de outro usuario) ---
 for %%D in ("%LocalAppData%\Programs\Python" "%UserProfile%\AppData\Local\Programs\Python") do (
     if exist %%D (
@@ -61,16 +73,6 @@ for %%D in ("%ProgramFiles%\Python" "%ProgramFiles(x86)%\Python") do (
         )
     )
 )
-
-rem --- procurar em locais comuns se não estiver no PATH ---
-for %%D in ("%LocalAppData%\Programs\Python" "%UserProfile%\AppData\Local\Programs\Python" "%ProgramFiles%\Python" "%ProgramFiles(x86)%\Python") do (
-    if exist %%D (
-        for /d %%V in (%%D\Python3*) do (
-            call :choose_python "%%V\python.exe"
-            if defined SYS_PYTHON goto :eof
-        )
-    )
-)
 goto :eof
 
 :choose_python
@@ -78,10 +80,12 @@ set "CANDIDATE=%~1"
 set "CANDIDATE_DIR=%~dp1"
 if exist "%CANDIDATE_DIR%pythonw.exe" (
     set "SYS_PYTHON=%CANDIDATE_DIR%pythonw.exe"
+    call :log "Escolhido pythonw" "%SYS_PYTHON%"
     exit /b
 )
 if exist "%CANDIDATE%" (
     set "SYS_PYTHON=%CANDIDATE%"
+    call :log "Escolhido python" "%SYS_PYTHON%"
 )
 exit /b
 
@@ -105,3 +109,13 @@ echo [CarimboPDF] Falha ao instalar dependencias. Verifique a conexão e tente n
 echo    "%PYTHON%" -m pip install -r "%ROOT%requirements.txt"
 pause
 exit /b 1
+
+:log
+setlocal
+set "MSG=%~1"
+set "VAL=%~2"
+set "LOG=%ROOT%launcher.log"
+(
+    echo [%date% %time%] %MSG%: %VAL%
+)>>"%LOG%"
+endlocal & goto :eof
