@@ -1,92 +1,25 @@
-# CarimboPDF - Executáveis e Atalhos
+# Executável Windows
 
-## 🚀 Como Executar
+Instale Python 3.10+ com Tcl/Tk e execute na raiz do repositório:
 
-### Opção 1: Duplo clique no arquivo CMD
-```
-Iniciar - Carimbar PDF (GUI).cmd
-```
-
-### Opção 2: Executar arquivo Python diretamente
-```
-CarimboPDF_GUI.pyw
-```
-
-### Opção 3: Via linha de comando (para desenvolvimento)
 ```powershell
-python -m data_hora_pdf.cli
+python -m venv .venv
+.venv\Scripts\python -m pip install -e ".[dev]"
+.venv\Scripts\python -m PyInstaller --clean --noconfirm CarimboPDF.spec
 ```
 
-## 📋 Características dos Executáveis
+O resultado fica em `dist/CarimboPDF.exe`. O logo é embutido e a aplicação usa
+`multiprocessing.freeze_support()` para processar PDFs fora da interface.
 
-### `CarimboPDF_GUI.pyw`
-- ✅ **Sem console**: Executa apenas a interface gráfica
-- ✅ **Centralizado**: Janela aparece no centro da tela
-- ✅ **Foco automático**: Janela fica em primeiro plano
-- ✅ **Tamanho otimizado**: 580x500 pixels mínimo
+Os binários históricos já presentes no repositório não representam necessariamente
+o código atual. Gere novamente antes de distribuir. Novos arquivos de build, logs
+e executáveis são ignorados pelo Git; publique versões compiladas em Releases.
 
-### `Iniciar - Carimbar PDF (GUI).cmd`
-- ✅ **Detecção automática**: Usa `pythonw.exe` se disponível
-- ✅ **Fallback inteligente**: Se `pythonw.exe` não existir, usa `python.exe`
-- ✅ **Ambiente virtual**: Prioriza o Python do venv se existir
-- ✅ **PYTHONPATH configurado**: Não precisa de configuração manual
+O atalho CMD instala o pacote na primeira execução e verifica as dependências antes
+de abrir a interface com `pythonw.exe`. Para atualizar um ambiente antigo:
 
-## 🎯 Interface Atualizada
-
-### Novas Características:
-- **Janela centralizada automaticamente**
-- **Console ocultado no Windows**
-- **Foco automático na abertura**
-- **Tamanho mínimo otimizado**
-- **Botão fechar (X) salva configurações**
-
-### Layout:
-```
-┌─────────────────────────────────┐
-│        Carimbar PDF             │
-├─────────────────────────────────┤
-│ PDF entrada: [____] [Selecionar]│
-│ PDF saída:   [____] [Salvar]    │
-│ ☑ Salvar no mesmo arquivo       │
-│                                 │
-│ Cidade: [São Paulo_______]      │
-│ Página: [0] Fonte: [12] [helv]  │
-│ Cor: [#000000] ☐Negrito ☐Itál. │
-│                                 │
-│ Logo: [____] [Selecionar]       │
-│ Largura: [2.0] Margem: [0.5]    │
-│                                 │
-│ ═══ PROTEÇÃO DO DOCUMENTO ═══   │
-│ Senha: [****] ☐Mostrar ☐Padrão  │
-│ ☐Restringir edição ☐Desab.cópia │
-│ ☐Criptografar conteúdo          │
-│                                 │
-│         [Carimbar] [Sair]       │
-└─────────────────────────────────┘
+```powershell
+.venv\Scripts\python -m pip install --upgrade -e .
 ```
 
-## 🔧 Configurações Técnicas
-
-### Ocultação do Console (Windows):
-```python
-import ctypes
-hwnd = ctypes.windll.kernel32.GetConsoleWindow()
-ctypes.windll.user32.ShowWindow(hwnd, 0)
-```
-
-### Centralização da Janela:
-```python
-window_width = root.winfo_reqwidth()
-window_height = root.winfo_reqheight()
-screen_width = root.winfo_screenwidth()
-screen_height = root.winfo_screenheight()
-x = (screen_width - window_width) // 2
-y = (screen_height - window_height) // 2
-root.geometry(f"{window_width}x{window_height}+{x}+{y}")
-```
-
-### Comportamento por Padrão:
-- **Sempre abre GUI** se nenhum parâmetro específico for fornecido
-- **Salva configurações** automaticamente ao fechar
-- **Carrega configurações** automaticamente ao abrir
-- **Foco na janela** para melhor experiência do usuário
+Consulte o README para uso, proteção e migração das preferências.

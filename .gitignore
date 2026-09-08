@@ -13,3 +13,14 @@ venv/
 # VS Code
 .vscode/
 .history/
+
+# Local builds and validation outputs
+build/
+dist/
+*.log
+.pytest_cache/
+.ruff_cache/
+.vs/
+test_*.pdf
+dummy.pdf
+complete_test.pdf

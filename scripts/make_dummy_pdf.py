@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
-import fitz  # PyMuPDF
+import pymupdf as fitz
 
 
 def make_blank_pdf(path: str, width: float = 595.276, height: float = 841.89):

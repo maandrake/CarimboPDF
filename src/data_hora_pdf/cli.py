@@ -1,91 +1,11 @@
+"""Interface de linha de comando; Tkinter é carregado apenas no modo gráfico."""
+
 import argparse
-import os
-import json
 import sys
-from datetime import date, datetime
 from pathlib import Path
+
+from .dates import parse_date
 from .stamper import StampOptions, stamp_pdf
-import tkinter as tk
-from tkinter import filedialog, messagebox
-try:
-    import tkinter.font as tkfont  # type: ignore
-except Exception:
-    tkfont = None
-try:
-    from tkinter import ttk  # type: ignore
-except Exception:
-    ttk = None
-
-# Tentar importar tkcalendar para o widget de calendário
-try:
-    from tkcalendar import DateEntry  # type: ignore
-    HAS_CALENDAR = True
-except ImportError:
-    HAS_CALENDAR = False
-
-
-def _get_config_file() -> Path:
-    """Retorna o caminho do arquivo de configuração."""
-    config_dir = Path.home() / ".data_hora_pdf"
-    config_dir.mkdir(exist_ok=True)
-    return config_dir / "config.json"
-
-
-def _load_config() -> dict:
-    """Carrega as configurações salvas."""
-    config_file = _get_config_file()
-    if config_file.exists():
-        try:
-            with open(config_file, 'r', encoding='utf-8') as f:
-                return json.load(f)
-        except Exception:
-            pass
-    return {}
-
-
-def _save_config(config: dict) -> None:
-    """Salva as configurações."""
-    config_file = _get_config_file()
-    try:
-        with open(config_file, 'w', encoding='utf-8') as f:
-            json.dump(config, f, indent=2, ensure_ascii=False)
-    except Exception:
-        pass
-
-
-def _hide_console() -> None:
-    """Oculta o console do Windows se estiver rodando em Windows."""
-    if sys.platform != "win32":
-        return
-    try:
-        import ctypes
-
-        hwnd = ctypes.windll.kernel32.GetConsoleWindow()
-        if hwnd:
-            ctypes.windll.user32.ShowWindow(hwnd, 0)  # SW_HIDE
-            ctypes.windll.kernel32.FreeConsole()
-    except Exception:
-        pass  # Se não conseguir ocultar, continua normalmente
-
-
-def _center_window(root: tk.Tk) -> None:
-    """Centraliza a janela na tela."""
-    root.update_idletasks()  # Garante que as dimensões estejam corretas
-    
-    # Obter dimensões da janela
-    window_width = root.winfo_reqwidth()
-    window_height = root.winfo_reqheight()
-    
-    # Obter dimensões da tela
-    screen_width = root.winfo_screenwidth()
-    screen_height = root.winfo_screenheight()
-    
-    # Calcular posição para centralizar
-    x = (screen_width - window_width) // 2
-    y = (screen_height - window_height) // 2
-    
-    # Definir geometria da janela
-    root.geometry(f"{window_width}x{window_height}+{x}+{y}")
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -101,16 +21,30 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--x", type=float, help="Posição X em pontos (72pt = 1 polegada)")
     p.add_argument("--y", type=float, help="Posição Y em pontos (72pt = 1 polegada)")
     p.add_argument("--font-size", type=float, default=12.0, help="Tamanho da fonte em pt")
-    p.add_argument("--font", default=None, help="Família/nome da fonte (helv|times|cour ou nome base do MuPDF)")
+    p.add_argument(
+        "--font", default=None, help="Família/nome da fonte (helv|times|cour ou nome base do MuPDF)"
+    )
     p.add_argument("--color", default="#000000", help="Cor do texto em HEX, ex: #000000")
     p.add_argument("--bold", action="store_true", help="Usar fonte em negrito")
     p.add_argument("--italic", action="store_true", help="Usar fonte em itálico")
     p.add_argument("--gui", action="store_true", help="Abrir seletor de arquivo e salvar automaticamente")
     p.add_argument("--in-place", action="store_true", help="Sobrescrever o arquivo de entrada")
     # Logo
-    p.add_argument("--logo-path", help="Caminho do arquivo de logo (jpg/png). Padrão: Logo.jpg ao lado do PDF.")
-    p.add_argument("--logo-width-cm", type=float, default=None, help="Largura do logo em centímetros (se omitido, usa o padrão do código)")
-    p.add_argument("--logo-margin-cm", type=float, default=None, help="Margem do logo em cm a partir da borda (se omitido, usa o padrão do código)")
+    p.add_argument(
+        "--logo-path", help="Caminho do arquivo de logo (jpg/png). Padrão: Logo.jpg ao lado do PDF."
+    )
+    p.add_argument(
+        "--logo-width-cm",
+        type=float,
+        default=None,
+        help="Largura do logo em centímetros (se omitido, usa o padrão do código)",
+    )
+    p.add_argument(
+        "--logo-margin-cm",
+        type=float,
+        default=None,
+        help="Margem do logo em cm a partir da borda (se omitido, usa o padrão do código)",
+    )
     # Proteção
     p.add_argument("--protection-password", help="Senha para proteção de edição do documento")
     p.add_argument("--restrict-editing", action="store_true", help="Restringir edição do documento")
@@ -121,576 +55,56 @@ def build_parser() -> argparse.ArgumentParser:
     # Controle de carimbo
     p.add_argument("--no-city", action="store_true", help="Não carimbar a linha da cidade")
     p.add_argument("--no-date", action="store_true", help="Não carimbar a linha da data")
+    p.add_argument("--input-password", help="Senha do PDF de entrada")
+    p.add_argument("--no-auto-logo", action="store_true", help="Desativar busca automática de logo")
     return p
 
 
-def _run_gui_with_form(args: argparse.Namespace) -> int:
-    if tk is None or filedialog is None or messagebox is None:
-        raise RuntimeError("Tkinter não disponível para o modo GUI.")
-
-    # Ocultar console do Windows
-    _hide_console()
-
-    root = tk.Tk()
-    root.title("Carimbar PDF - Formulário")
-
-    # Mapear famílias de fonte com apoio do tkfont
-    available_families: set[str] = set()
-    if tkfont is not None:
-        try:
-            available_families = {name for name in tkfont.families(root)}
-        except Exception:
-            available_families = set()
-
-    font_candidates: list[tuple[str, str, tuple[str, ...]]] = [
-        ("helv", "Sans Serif (Helvetica / Arial)", ("Helvetica", "Arial", "Liberation Sans", "DejaVu Sans")),
-        ("times", "Serif (Times New Roman)", ("Times New Roman", "Times", "Liberation Serif", "DejaVu Serif")),
-        ("cour", "Monoespaçado (Courier)", ("Courier New", "Courier", "Liberation Mono", "DejaVu Sans Mono")),
-    ]
-
-    def resolve_font_key(raw: str | None) -> str:
-        aliases = {
-            "helv": "helv",
-            "helvb": "helv",
-            "helvi": "helv",
-            "helvbi": "helv",
-            "helvetica": "helv",
-            "arial": "helv",
-            "sans": "helv",
-            "times": "times",
-            "timesb": "times",
-            "timesi": "times",
-            "timesbi": "times",
-            "timesnewroman": "times",
-            "serif": "times",
-            "cour": "cour",
-            "courb": "cour",
-            "couri": "cour",
-            "courbi": "cour",
-            "courier": "cour",
-            "couriernew": "cour",
-            "monospace": "cour",
-        }
-        if not raw:
-            return "helv"
-        normalized = raw.lower().replace(" ", "")
-        return aliases.get(normalized, "helv")
-
-    font_ui_data: dict[str, dict[str, str]] = {}
-    font_labels: list[str] = []
-    label_to_key: dict[str, str] = {}
-    for key, label, family_candidates in font_candidates:
-        preview_family = next((fam for fam in family_candidates if fam in available_families), family_candidates[0])
-        font_ui_data[key] = {"label": label, "preview_family": preview_family}
-        font_labels.append(label)
-        label_to_key[label] = key
-    
-    # Configurar ícone da janela se possível
-    try:
-        # Tentar usar o logo como ícone se existir
-        logo_path = Path("Logo.jpg")
-        if logo_path.exists():
-            # Converter para formato de ícone se necessário
-            pass
-    except Exception:
-        pass
-
-    # Carregar configurações salvas
-    saved_config = _load_config()
-
-    # Defaults a partir dos args e do dataclass
-    defaults = StampOptions()
-    cidade_default = args.cidade or os.environ.get("CIDADE_PADRAO") or saved_config.get("cidade", "Lages/SC.")
-
-    # Tk variables (usando configurações salvas quando disponíveis)
-    v_input = tk.StringVar(value=args.input or "")
-    v_inplace = tk.BooleanVar(value=saved_config.get("inplace", True if not args.output else False))
-    v_output = tk.StringVar(value=args.output or "")
-    v_cidade = tk.StringVar(value=cidade_default)
-    stamp_city_default = saved_config.get("stamp_city")
-    if stamp_city_default is None:
-        stamp_city_default = not getattr(args, "no_city", False)
-    stamp_date_default = saved_config.get("stamp_date")
-    if stamp_date_default is None:
-        stamp_date_default = not getattr(args, "no_date", False)
-    v_stamp_city = tk.BooleanVar(value=bool(stamp_city_default))
-    v_stamp_date = tk.BooleanVar(value=bool(stamp_date_default))
-    v_page = tk.IntVar(value=saved_config.get("page", args.page or 0))
-    v_fontsize = tk.DoubleVar(value=saved_config.get("font_size", args.font_size or 12.0))
-    initial_font_raw = saved_config.get("font", args.font or defaults.font)
-    initial_font_key = resolve_font_key(initial_font_raw)
-    if initial_font_key not in font_ui_data:
-        initial_font_key = "helv"
-    v_font = tk.StringVar(value=initial_font_key)
-    v_font_label = tk.StringVar(value=font_ui_data[v_font.get()]["label"])
-    v_color = tk.StringVar(value=saved_config.get("color", args.color or "#000000"))
-    v_bold = tk.BooleanVar(value=saved_config.get("bold", bool(args.bold)))
-    v_logo_path = tk.StringVar(value=saved_config.get("logo_path", args.logo_path or ""))
-    v_logo_width = tk.DoubleVar(value=saved_config.get("logo_width_cm", args.logo_width_cm if args.logo_width_cm is not None else defaults.logo_width_cm))
-    v_logo_margin = tk.DoubleVar(value=saved_config.get("logo_margin_cm", args.logo_margin_cm if args.logo_margin_cm is not None else defaults.logo_margin_cm))
-    v_italic = tk.BooleanVar(value=saved_config.get("italic", bool(getattr(args, "italic", False))))
-    # Proteção
-    v_protection_password = tk.StringVar(value=saved_config.get("protection_password", getattr(args, "protection_password", "") or ""))
-    v_restrict_editing = tk.BooleanVar(value=saved_config.get("restrict_editing", bool(getattr(args, "restrict_editing", False))))
-    v_no_copy = tk.BooleanVar(value=saved_config.get("no_copy", bool(getattr(args, "no_copy", False))))
-    v_encrypt_content = tk.BooleanVar(value=saved_config.get("encrypt_content", bool(getattr(args, "encrypt_content", False))))
-    # Novas opções
-    v_show_password = tk.BooleanVar(value=False)
-    v_save_password = tk.BooleanVar(value=saved_config.get("save_password", False))
-    # Data personalizada
-    v_use_custom_date = tk.BooleanVar(value=saved_config.get("use_custom_date", False))
-    
-    # Carregar data salva ou usar hoje como padrão
-    saved_date_str = saved_config.get("custom_date")
-    if saved_date_str:
-        try:
-            saved_date = datetime.strptime(saved_date_str, "%Y-%m-%d").date()
-            # Verificar se a data salva não é futura
-            if saved_date <= date.today():
-                default_date = saved_date
-            else:
-                default_date = date.today()
-        except:
-            default_date = date.today()
-    else:
-        default_date = date.today()
-
-    # Helpers
-    def browse_input():
-        sel = filedialog.askopenfilename(title="Selecione um PDF", filetypes=[("Arquivos PDF", "*.pdf"), ("Todos", "*.*")])
-        if sel:
-            v_input.set(sel)
-            if v_inplace.get():
-                v_output.set(sel)
-
-    def browse_output():
-        sel = filedialog.asksaveasfilename(title="Salvar como", defaultextension=".pdf", filetypes=[("Arquivos PDF", "*.pdf")])
-        if sel:
-            v_output.set(sel)
-
-    def browse_logo():
-        sel = filedialog.askopenfilename(title="Selecione o logo", filetypes=[("Imagens", "*.png;*.jpg;*.jpeg"), ("Todos", "*.*")])
-        if sel:
-            v_logo_path.set(sel)
-
-    def on_toggle_inplace():
-        if v_inplace.get():
-            v_output.set(v_input.get())
-            out_entry.configure(state="disabled")
-            out_btn.configure(state="disabled")
-        else:
-            out_entry.configure(state="normal")
-            out_btn.configure(state="normal")
-
-    def toggle_password_visibility():
-        if v_show_password.get():
-            password_entry.configure(show="")
-        else:
-            password_entry.configure(show="*")
-
-    def toggle_custom_date():
-        """Habilita/desabilita o seletor de data."""
-        pass  # Será redefinido após criar os widgets
-
-    def save_current_config():
-        """Salva as configurações atuais."""
-        config = {
-            "inplace": v_inplace.get(),
-            "cidade": v_cidade.get(),
-            "page": v_page.get(),
-            "font_size": v_fontsize.get(),
-            "font": v_font.get(),
-            "color": v_color.get(),
-            "bold": v_bold.get(),
-            "italic": v_italic.get(),
-            "logo_path": v_logo_path.get(),
-            "logo_width_cm": v_logo_width.get(),
-            "logo_margin_cm": v_logo_margin.get(),
-            "restrict_editing": v_restrict_editing.get(),
-            "no_copy": v_no_copy.get(),
-            "encrypt_content": v_encrypt_content.get(),
-            "save_password": v_save_password.get(),
-            "stamp_city": v_stamp_city.get(),
-            "stamp_date": v_stamp_date.get(),
-            "use_custom_date": v_use_custom_date.get() if v_stamp_date.get() else False,
-        }
-        
-        # Salvar senha apenas se a opção estiver marcada
-        if v_save_password.get():
-            config["protection_password"] = v_protection_password.get()
-            
-        # Salvar data personalizada se estiver sendo usada
-        if v_stamp_date.get() and v_use_custom_date.get():
-            try:
-                if HAS_CALENDAR and hasattr(date_entry, 'get_date'):
-                    selected_date = date_entry.get_date()
-                    config["custom_date"] = selected_date.strftime("%Y-%m-%d")
-                else:
-                    config["custom_date"] = default_date.strftime("%Y-%m-%d")
-            except:
-                pass
-        
-        _save_config(config)
-
-    def on_closing():
-        """Chamado quando a janela é fechada."""
-        save_current_config()
-        root.destroy()
-
-    def do_stamp():
-        inp = v_input.get().strip()
-        outp = v_output.get().strip()
-        if not inp:
-            messagebox.showerror("Erro", "Selecione um arquivo PDF de entrada.", parent=root)
-            return
-        if not os.path.exists(inp):
-            messagebox.showerror("Erro", f"Arquivo não encontrado:\n{inp}", parent=root)
-            return
-        if v_inplace.get():
-            outp = inp
-        elif not outp:
-            messagebox.showerror("Erro", "Informe o caminho de saída ou marque 'Salvar no mesmo arquivo'.", parent=root)
-            return
-
-        try:
-            opts = StampOptions(
-                page=v_page.get(),
-                font_size=float(v_fontsize.get()),
-                font=v_font.get().strip() or "helv",
-                color=v_color.get(),
-                bold=bool(v_bold.get()),
-                italic=bool(v_italic.get()),
-                logo_path=v_logo_path.get() or None,
-                # Proteção
-                protection_password=v_protection_password.get().strip() or None,
-                restrict_editing=bool(v_restrict_editing.get()),
-                allow_copy=not bool(v_no_copy.get()),  # Invertido: no_copy -> allow_copy
-                encrypt_content=bool(v_encrypt_content.get()),
-                stamp_city=bool(v_stamp_city.get()),
-                stamp_date=bool(v_stamp_date.get()),
-            )
-            # aplicar parâmetros de logo se informados
-            lw = float(v_logo_width.get())
-            lm = float(v_logo_margin.get())
-            if lw > 0:
-                opts.logo_width_cm = lw
-            if lm >= 0:
-                opts.logo_margin_cm = lm
-
-            cidade_val = v_cidade.get().strip() or cidade_default
-            
-            # Determinar qual data usar
-            if v_use_custom_date.get():
-                try:
-                    if HAS_CALENDAR and hasattr(date_entry, 'get_date'):
-                        selected_date = date_entry.get_date()
-                    else:
-                        # Fallback para campo de texto
-                        date_str = v_date_string.get()
-                        selected_date = datetime.strptime(date_str, "%d/%m/%Y").date()
-                        
-                    # Verificar se a data não é futura
-                    if selected_date > date.today():
-                        messagebox.showwarning("Data inválida", "Não é possível usar uma data futura. Usando a data de hoje.", parent=root)
-                        selected_date = date.today()
-                except Exception:
-                    messagebox.showwarning("Data inválida", "Formato de data inválido. Usando a data de hoje.", parent=root)
-                    selected_date = date.today()
-            else:
-                selected_date = date.today()
-                
-            stamp_pdf(inp, outp, cidade_val, selected_date, opts)
-            messagebox.showinfo("Concluído", f"PDF atualizado com sucesso:\n{outp}", parent=root)
-        except Exception as e:
-            messagebox.showerror("Falha", f"Erro ao processar o PDF:\n{e}", parent=root)
-
-    # Layout
-    container = ttk.Frame(root) if ttk else tk.Frame(root)
-    container.pack(fill=tk.BOTH, expand=True, padx=12, pady=12)
-
-    def add_row(row, label_text, widget):
-        lbl = (ttk.Label(container, text=label_text) if ttk else tk.Label(container, text=label_text))
-        lbl.grid(row=row, column=0, sticky="w", pady=4)
-        widget.grid(row=row, column=1, sticky="we", pady=4)
-
-    # Input/output
-    in_row = (ttk.Frame(container) if ttk else tk.Frame(container))
-    in_entry = (ttk.Entry(in_row, textvariable=v_input, width=50) if ttk else tk.Entry(in_row, textvariable=v_input, width=50))
-    in_btn = (ttk.Button(in_row, text="Selecionar...", command=browse_input) if ttk else tk.Button(in_row, text="Selecionar...", command=browse_input))
-    in_entry.pack(side=tk.LEFT, fill=tk.X, expand=True)
-    in_btn.pack(side=tk.LEFT, padx=6)
-    add_row(0, "PDF de entrada:", in_row)
-
-    out_row = (ttk.Frame(container) if ttk else tk.Frame(container))
-    out_entry = (ttk.Entry(out_row, textvariable=v_output, width=50) if ttk else tk.Entry(out_row, textvariable=v_output, width=50))
-    out_btn = (ttk.Button(out_row, text="Salvar como...", command=browse_output) if ttk else tk.Button(out_row, text="Salvar como...", command=browse_output))
-    out_entry.pack(side=tk.LEFT, fill=tk.X, expand=True)
-    out_btn.pack(side=tk.LEFT, padx=6)
-    add_row(1, "PDF de saída:", out_row)
-
-    inplace_row = (ttk.Frame(container) if ttk else tk.Frame(container))
-    inplace_chk = (ttk.Checkbutton(inplace_row, text="Salvar no mesmo arquivo", variable=v_inplace, command=on_toggle_inplace) if ttk else tk.Checkbutton(inplace_row, text="Salvar no mesmo arquivo", variable=v_inplace, command=on_toggle_inplace))
-    inplace_chk.pack(side=tk.LEFT)
-    add_row(2, "", inplace_row)
-
-    # Campos básicos
-    cidade_entry = (ttk.Entry(container, textvariable=v_cidade) if ttk else tk.Entry(container, textvariable=v_cidade))
-    add_row(3, "Cidade:", cidade_entry)
-
-    stamp_row = (ttk.Frame(container) if ttk else tk.Frame(container))
-    stamp_city_chk = (ttk.Checkbutton(stamp_row, text="Carimbar cidade", variable=v_stamp_city) if ttk else tk.Checkbutton(stamp_row, text="Carimbar cidade", variable=v_stamp_city))
-    stamp_date_chk = (ttk.Checkbutton(stamp_row, text="Carimbar data", variable=v_stamp_date) if ttk else tk.Checkbutton(stamp_row, text="Carimbar data", variable=v_stamp_date))
-    stamp_city_chk.pack(side=tk.LEFT, padx=(0, 10))
-    stamp_date_chk.pack(side=tk.LEFT)
-    add_row(4, "Linhas:", stamp_row)
-
-    page_spin = (ttk.Spinbox(container, from_=0, to=9999, textvariable=v_page, width=6) if ttk else tk.Spinbox(container, from_=0, to=9999, textvariable=v_page, width=6))
-    add_row(5, "Página (0=1ª):", page_spin)
-
-    # Data personalizada
-    date_row = (ttk.Frame(container) if ttk else tk.Frame(container))
-    use_custom_chk = (ttk.Checkbutton(date_row, text="Usar data personalizada:", variable=v_use_custom_date, command=toggle_custom_date) if ttk else tk.Checkbutton(date_row, text="Usar data personalizada:", variable=v_use_custom_date, command=toggle_custom_date))
-    
-    # Variável para data no formato string (para fallback)
-    v_date_string = tk.StringVar(value=default_date.strftime("%d/%m/%Y"))
-    
-    # Criar widget de data baseado na disponibilidade do tkcalendar
-    if HAS_CALENDAR:
-        date_entry = DateEntry(date_row, 
-                             width=12, 
-                             background='darkblue',
-                             foreground='white', 
-                             borderwidth=2,
-                             date_pattern='dd/mm/yyyy',
-                             maxdate=date.today(),  # Não permite datas futuras
-                             state="disabled")
-        date_entry.set_date(default_date)
-    else:
-        # Fallback para Entry simples se tkcalendar não estiver disponível
-        date_entry = (ttk.Entry(date_row, textvariable=v_date_string, width=12, state="disabled") if ttk else tk.Entry(date_row, textvariable=v_date_string, width=12, state="disabled"))
-    
-    use_custom_chk.pack(side=tk.LEFT, padx=(0, 5))
-    date_entry.pack(side=tk.LEFT)
-    add_row(6, "", date_row)
-    
-    # Redefinir a função toggle_custom_date agora que os widgets foram criados
-    def toggle_custom_date():
-        """Habilita/desabilita o seletor de data."""
-        if not v_stamp_date.get():
-            v_use_custom_date.set(False)
-            use_custom_chk.configure(state="disabled")
-            date_entry.configure(state="disabled")
-            return
-
-        use_custom_chk.configure(state="normal")
-        if v_use_custom_date.get():
-            date_entry.configure(state="normal")
-        else:
-            date_entry.configure(state="disabled")
-
-    def on_toggle_stamp_city():
-        estado = "normal" if v_stamp_city.get() else "disabled"
-        cidade_entry.configure(state=estado)
-
-    def on_toggle_stamp_date():
-        if not v_stamp_date.get():
-            v_use_custom_date.set(False)
-        toggle_custom_date()
-
-    stamp_city_chk.configure(command=on_toggle_stamp_city)
-    stamp_date_chk.configure(command=on_toggle_stamp_date)
-    use_custom_chk.configure(command=toggle_custom_date)
-
-    fontsize_spin = (ttk.Spinbox(container, from_=6, to=72, increment=0.5, textvariable=v_fontsize, width=6) if ttk else tk.Spinbox(container, from_=6, to=72, increment=0.5, textvariable=v_fontsize, width=6))
-    add_row(7, "Tamanho fonte:", fontsize_spin)
-
-    font_row = (ttk.Frame(container) if ttk else tk.Frame(container))
-    preview_font_obj = tkfont.Font(root=root, family=font_ui_data[v_font.get()]["preview_family"], size=14) if tkfont else None
-
-    def update_font_preview(*_args):
-        if preview_font_obj is None:
-            return
-        key = v_font.get()
-        data = font_ui_data.get(key, font_ui_data["helv"])
-        weight = "bold" if v_bold.get() else "normal"
-        slant = "italic" if v_italic.get() else "roman"
-        try:
-            preview_font_obj.configure(family=data["preview_family"], weight=weight, slant=slant)
-        except Exception:
-            preview_font_obj.configure(weight=weight, slant=slant)
-
-    def on_font_selected(_event: object | None = None) -> None:
-        label = v_font_label.get()
-        key = label_to_key.get(label, "helv")
-        v_font.set(key)
-        update_font_preview()
-
-    if ttk:
-        font_selector = ttk.Combobox(font_row, textvariable=v_font_label, values=font_labels, state="readonly", width=28)
-        font_selector.bind("<<ComboboxSelected>>", on_font_selected)
-    else:
-        font_selector = tk.OptionMenu(font_row, v_font_label, *font_labels, command=lambda _value: on_font_selected(None))
-
-    font_selector.pack(side=tk.LEFT, fill=tk.X, expand=True)
-    preview_font_for_label = preview_font_obj if preview_font_obj is not None else ("TkDefaultFont", 12)
-    font_preview_label = (ttk.Label(font_row, text="AaBbCc", font=preview_font_for_label) if ttk else tk.Label(font_row, text="AaBbCc", font=preview_font_for_label))
-    font_preview_label.pack(side=tk.LEFT, padx=8)
-    add_row(8, "Fonte:", font_row)
-
-    color_entry = (ttk.Entry(container, textvariable=v_color) if ttk else tk.Entry(container, textvariable=v_color))
-    add_row(9, "Cor (HEX):", color_entry)
-
-    style_row = (ttk.Frame(container) if ttk else tk.Frame(container))
-    bold_chk = (ttk.Checkbutton(style_row, text="Negrito", variable=v_bold) if ttk else tk.Checkbutton(style_row, text="Negrito", variable=v_bold))
-    italic_chk = (ttk.Checkbutton(style_row, text="Itálico", variable=v_italic) if ttk else tk.Checkbutton(style_row, text="Itálico", variable=v_italic))
-    bold_chk.pack(side=tk.LEFT, padx=6)
-    italic_chk.pack(side=tk.LEFT, padx=6)
-    add_row(10, "Estilo:", style_row)
-
-    if preview_font_obj is not None:
-        v_bold.trace_add("write", lambda *_args: update_font_preview())
-        v_italic.trace_add("write", lambda *_args: update_font_preview())
-
-    # Logo
-    logo_row = (ttk.Frame(container) if ttk else tk.Frame(container))
-    logo_entry = (ttk.Entry(logo_row, textvariable=v_logo_path, width=50) if ttk else tk.Entry(logo_row, textvariable=v_logo_path, width=50))
-    logo_btn = (ttk.Button(logo_row, text="Selecionar...", command=browse_logo) if ttk else tk.Button(logo_row, text="Selecionar...", command=browse_logo))
-    logo_entry.pack(side=tk.LEFT, fill=tk.X, expand=True)
-    logo_btn.pack(side=tk.LEFT, padx=6)
-    add_row(11, "Logo (opcional):", logo_row)
-
-    logo_w_spin = (ttk.Spinbox(container, from_=0.5, to=20, increment=0.5, textvariable=v_logo_width, width=6) if ttk else tk.Spinbox(container, from_=0.5, to=20, increment=0.5, textvariable=v_logo_width, width=6))
-    add_row(12, "Logo largura (cm):", logo_w_spin)
-
-    logo_m_spin = (ttk.Spinbox(container, from_=0.0, to=20, increment=0.5, textvariable=v_logo_margin, width=6) if ttk else tk.Spinbox(container, from_=0.0, to=20, increment=0.5, textvariable=v_logo_margin, width=6))
-    add_row(13, "Logo margem (cm):", logo_m_spin)
-
-    # Separador para proteção
-    sep_label = (ttk.Label(container, text="PROTEÇÃO DO DOCUMENTO", font=("TkDefaultFont", 9, "bold")) if ttk else tk.Label(container, text="PROTEÇÃO DO DOCUMENTO", font=("TkDefaultFont", 9, "bold")))
-    add_row(14, "", sep_label)
-
-    # Campos de proteção
-    password_row = (ttk.Frame(container) if ttk else tk.Frame(container))
-    password_entry = (ttk.Entry(password_row, textvariable=v_protection_password, show="*", width=30) if ttk else tk.Entry(password_row, textvariable=v_protection_password, show="*", width=30))
-    show_password_chk = (ttk.Checkbutton(password_row, text="Mostrar", variable=v_show_password, command=toggle_password_visibility) if ttk else tk.Checkbutton(password_row, text="Mostrar", variable=v_show_password, command=toggle_password_visibility))
-    save_password_chk = (ttk.Checkbutton(password_row, text="Salvar como padrão", variable=v_save_password) if ttk else tk.Checkbutton(password_row, text="Salvar como padrão", variable=v_save_password))
-    
-    password_entry.pack(side=tk.LEFT, padx=(0, 5))
-    show_password_chk.pack(side=tk.LEFT, padx=(0, 5))
-    save_password_chk.pack(side=tk.LEFT)
-    add_row(15, "Senha para edição:", password_row)
-
-    protect_row = (ttk.Frame(container) if ttk else tk.Frame(container))
-    restrict_chk = (ttk.Checkbutton(protect_row, text="Restringir edição", variable=v_restrict_editing) if ttk else tk.Checkbutton(protect_row, text="Restringir edição", variable=v_restrict_editing))
-    no_copy_chk = (ttk.Checkbutton(protect_row, text="Desativar cópia", variable=v_no_copy) if ttk else tk.Checkbutton(protect_row, text="Desativar cópia", variable=v_no_copy))
-    restrict_chk.pack(side=tk.LEFT, padx=6)
-    no_copy_chk.pack(side=tk.LEFT, padx=6)
-    add_row(16, "Restrições:", protect_row)
-
-    encrypt_row = (ttk.Frame(container) if ttk else tk.Frame(container))
-    encrypt_chk = (ttk.Checkbutton(encrypt_row, text="Criptografar todo o conteúdo", variable=v_encrypt_content) if ttk else tk.Checkbutton(encrypt_row, text="Criptografar todo o conteúdo", variable=v_encrypt_content))
-    encrypt_chk.pack(side=tk.LEFT, padx=6)
-    add_row(17, "Criptografia:", encrypt_row)
-
-    # Botões
-    btn_row = (ttk.Frame(container) if ttk else tk.Frame(container))
-    run_btn = (ttk.Button(btn_row, text="Carimbar", command=do_stamp) if ttk else tk.Button(btn_row, text="Carimbar", command=do_stamp))
-    quit_btn = (ttk.Button(btn_row, text="Sair", command=on_closing) if ttk else tk.Button(btn_row, text="Sair", command=on_closing))
-    run_btn.pack(side=tk.LEFT)
-    quit_btn.pack(side=tk.LEFT, padx=8)
-    add_row(18, "", btn_row)
-
-    # Ajustes finais
-    container.columnconfigure(1, weight=1)
-    update_font_preview()
-    on_toggle_inplace()
-    on_toggle_stamp_city()
-    on_toggle_stamp_date()  # já aciona toggle_custom_date internamente
-    
-    # Configurar protocolo de fechamento da janela
-    root.protocol("WM_DELETE_WINDOW", on_closing)
-    
-    # Definir tamanho mínimo e centralizar
-    root.minsize(580, 500)
-    _center_window(root)
-    
-    # Focar na janela
-    root.focus_force()
-    root.lift()
-    
-    root.mainloop()
-    return 0
-
-
 def main(argv: list[str] | None = None) -> int:
+    arguments = sys.argv[1:] if argv is None else argv
     parser = build_parser()
-    args = parser.parse_args(argv)
+    args = parser.parse_args(arguments)
+    if args.gui or not arguments:
+        from .gui import run_gui
 
-    # Modo GUI por padrão se nenhum argumento específico for fornecido
-    # ou se --gui foi especificado explicitamente
-    should_use_gui = (
-        args.gui or 
-        not args.input or 
-        (not args.input and not args.output and not args.cidade and len([x for x in (argv or []) if not x.startswith('--')]) == 0)
-    )
-    
-    if should_use_gui:
-        return _run_gui_with_form(args)
-
-    # Modo CLI tradicional (sem GUI)
-    stamp_city = not getattr(args, "no_city", False)
-    stamp_date = not getattr(args, "no_date", False)
-
+        return run_gui(args)
     if not args.input or (not args.output and not args.in_place):
-        parser.error("Parâmetros obrigatórios ausentes: --input e (--output ou --in-place).")
-    if stamp_city and not args.cidade:
-        parser.error("Informe --cidade ou utilize --no-city para não carimbar a linha da cidade.")
-
-    input_path = Path(args.input)
-    output_path = Path(args.input) if args.in_place else Path(args.output)
-    if not input_path.exists():
-        parser.error(f"Arquivo de entrada não encontrado: {input_path}")
-
+        parser.error("Informe --input e (--output ou --in-place).")
+    if args.output and args.in_place:
+        parser.error("Use apenas --output ou --in-place.")
+    output = Path(args.input if args.in_place else args.output)
     opts = StampOptions(
         page=args.page,
         x=args.x,
         y=args.y,
         font_size=args.font_size,
-        font=(args.font or "helv"),
+        font=args.font or "helv",
         color=args.color,
         bold=args.bold,
         italic=args.italic,
         logo_path=args.logo_path,
-        # Proteção
-        protection_password=getattr(args, "protection_password", None),
-        restrict_editing=getattr(args, "restrict_editing", False),
-        allow_copy=not getattr(args, "no_copy", False),  # Invertido
-        encrypt_content=getattr(args, "encrypt_content", False),
-        stamp_city=stamp_city,
-        stamp_date=stamp_date,
+        logo_width_cm=2.0 if args.logo_width_cm is None else args.logo_width_cm,
+        logo_margin_cm=0.5 if args.logo_margin_cm is None else args.logo_margin_cm,
+        protection_password=args.protection_password,
+        input_password=args.input_password,
+        restrict_editing=args.restrict_editing,
+        allow_copy=not args.no_copy,
+        encrypt_content=args.encrypt_content,
+        stamp_city=not args.no_city,
+        stamp_date=not args.no_date,
+        auto_logo=not args.no_auto_logo,
     )
-    if args.logo_width_cm is not None:
-        opts.logo_width_cm = args.logo_width_cm
-    if args.logo_margin_cm is not None:
-        opts.logo_margin_cm = args.logo_margin_cm
-    
-    # Determinar a data a ser usada
-    if getattr(args, 'date', None):
-        try:
-            custom_date = datetime.strptime(args.date, "%d/%m/%Y").date()
-            if custom_date > date.today():
-                parser.error("A data não pode ser futura.")
-            use_date = custom_date
-        except ValueError:
-            parser.error("Formato de data inválido. Use DD/MM/AAAA")
-    else:
-        use_date = date.today()
-    
-    cidade_cli = args.cidade or ""
-    stamp_pdf(str(input_path), str(output_path), cidade_cli, use_date, opts)
-    print(f"PDF gerado: {output_path}")
+    try:
+        stamp_pdf(args.input, str(output), args.cidade or "", parse_date(args.date), opts)
+    except Exception as exc:
+        print(f"Erro: {exc}", file=sys.stderr)
+        return 1
+    print(f"PDF gerado: {output}")
     return 0
 
 
 if __name__ == "__main__":
+    from multiprocessing import freeze_support
+
+    freeze_support()
     raise SystemExit(main())
