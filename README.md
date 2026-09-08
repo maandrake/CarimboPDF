@@ -4,6 +4,9 @@
 
 Aplicação Python para carimbar PDFs com cidade e data em português, logo e proteção de edição.
 
+**Windows:** [baixar o executável atualizado](https://github.com/maandrake/CarimboPDF/raw/refs/heads/main/dist/CarimboPDF.exe),
+com a interface refatorada e o ícone corrigido. O arquivo fica em `dist/CarimboPDF.exe`.
+
 ## Instalação e execução
 
 Requer Python 3.10+ com Tkinter. No Linux, instale também `python3-tk`.
