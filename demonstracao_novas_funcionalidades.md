@@ -1,3 +1,5 @@
+> Documento histórico da versão 2. Para o comportamento atual, consulte [README.md](README.md).
+
 # Demonstração das Novas Funcionalidades
 
 Este documento demonstra as novas funcionalidades implementadas no CarimboPDF.

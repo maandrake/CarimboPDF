@@ -1,11 +1,21 @@
 from __future__ import annotations
 
+import io
+import math
+import os
+import re
+import sys
+import tempfile
 from dataclasses import dataclass
 from datetime import date
 from pathlib import Path
-import io
 
-import fitz  # PyMuPDF
+import pymupdf as fitz
+
+
+def _positive(value: float, name: str, *, zero: bool = False) -> None:
+    if not math.isfinite(value) or value < 0 or (value == 0 and not zero):
+        raise ValueError(f"{name} deve ser um número {'não negativo' if zero else 'positivo'} e finito.")
 
 
 @dataclass
@@ -29,6 +39,8 @@ class StampOptions:
     allow_copy: bool = True  # Permitir copiar texto
     encrypt_content: bool = False  # Criptografar todo o conteúdo
     # Controle de carimbo
+    input_password: str | None = None
+    auto_logo: bool = True
     stamp_city: bool = True
     stamp_date: bool = True
 
@@ -59,7 +71,7 @@ def _parse_hex_color(hex_color: str):
     s = hex_color.strip().lstrip("#")
     if len(s) == 3:
         s = "".join(ch * 2 for ch in s)
-    if len(s) != 6:
+    if not re.fullmatch(r"[0-9a-fA-F]{6}", s):
         raise ValueError(f"Cor inválida: {hex_color}")
     r = int(s[0:2], 16) / 255.0
     g = int(s[2:4], 16) / 255.0
@@ -95,227 +107,136 @@ def _resolve_pdf_font_name(base: str, bold: bool, italic: bool) -> str:
     return base_normalized
 
 
+def _validate(options: StampOptions, cidade: str) -> None:
+    _positive(options.font_size, "Tamanho da fonte")
+    _positive(options.margin, "Margem", zero=True)
+    _positive(options.logo_width_cm, "Largura do logo")
+    _positive(options.logo_margin_cm, "Margem do logo", zero=True)
+    for name in ("x", "y"):
+        value = getattr(options, name)
+        if value is not None:
+            _positive(value, name.upper(), zero=True)
+    _parse_hex_color(options.color)
+    if options.stamp_city and not cidade.strip():
+        raise ValueError("Informe a cidade ou desative o carimbo da cidade.")
+    if options.protection_password and len(options.protection_password.encode("utf-8")) > 40:
+        raise ValueError("A senha de edição deve ter no máximo 40 bytes em UTF-8.")
+    if (
+        options.restrict_editing or not options.allow_copy or options.encrypt_content
+    ) and not options.protection_password:
+        raise ValueError("Informe uma senha de edição para aplicar a proteção.")
+
+
+def _resolve_logo(input_pdf: Path, options: StampOptions) -> Path | None:
+    if options.logo_path:
+        logo = Path(options.logo_path).expanduser()
+        if not logo.is_file():
+            raise FileNotFoundError(f"Logo não encontrado: {logo}")
+        return logo
+    if options.auto_logo:
+        locations = [Path.cwd(), input_pdf.parent]
+        if getattr(sys, "frozen", False):
+            locations.extend([Path(sys.executable).parent, Path(getattr(sys, "_MEIPASS", "."))])
+        for folder in locations:
+            for name in ("Logo.jpg", "logo.jpg", "Logo.png", "logo.png"):
+                candidate = folder / name
+                if candidate.is_file():
+                    return candidate
+    return None
+
+
+def _insert_logo(page: fitz.Page, logo: Path, options: StampOptions) -> None:
+    from PIL import Image
+
+    with Image.open(logo) as original:
+        # Preserve transparency while removing incompatible ICC profiles.
+        im = original.convert("RGBA")
+        width, height = im.size
+        data = io.BytesIO()
+        im.save(data, format="PNG", icc_profile=None)
+    w = options.logo_width_cm * 72 / 2.54
+    h = w * height / width
+    margin = options.logo_margin_cm * 72 / 2.54
+    bounds = page.cropbox
+    rect = fitz.Rect(margin, bounds.height - margin - h, margin + w, bounds.height - margin)
+    if not fitz.Rect(0, 0, bounds.width, bounds.height).contains(rect):
+        raise ValueError("O logo não cabe na página com a largura e margem informadas.")
+    page.insert_image(rect, stream=data.getvalue(), keep_proportion=True)
+
+
+def _insert_text(page: fitz.Page, cidade: str, d: date, options: StampOptions) -> None:
+    lines = []
+    if options.stamp_city:
+        lines.append(("city", cidade.strip().upper()))
+    if options.stamp_date:
+        lines.append(("date", f"{data_por_extenso(d)}.".upper()))
+    fontname = _resolve_pdf_font_name(options.font, options.bold, options.italic)
+    try:
+        fitz.Font(fontname)
+    except Exception:
+        fontname = _resolve_pdf_font_name("helv", options.bold, options.italic)
+    color = _parse_hex_color(options.color)
+    for index, (kind, text) in enumerate(lines):
+        # Preserve the coordinates of the existing document template.
+        if options.x is None and options.y is None:
+            x, y = {"city": (337.0, 280.0), "date": (391.0, 307.0)}[kind]
+        else:
+            x = options.x if options.x is not None else options.margin
+            baseline = options.y if options.y is not None else page.cropbox.height - options.margin
+            y = baseline - (len(lines) - index - 1) * options.font_size * 1.2
+        page.insert_text((x, y), text, fontsize=options.font_size, fontname=fontname, fill=color)
+
+
+def _save_options(options: StampOptions) -> dict:
+    if not options.protection_password:
+        return {"encryption": fitz.PDF_ENCRYPT_KEEP}
+    permissions = -1
+    if options.restrict_editing:
+        permissions &= ~(
+            fitz.PDF_PERM_MODIFY | fitz.PDF_PERM_ANNOTATE | fitz.PDF_PERM_FORM | fitz.PDF_PERM_ASSEMBLE
+        )
+    if not options.allow_copy:
+        permissions &= ~fitz.PDF_PERM_COPY
+    return dict(
+        encryption=fitz.PDF_ENCRYPT_AES_256,
+        owner_pw=options.protection_password,
+        user_pw="",
+        permissions=permissions,
+    )
+
 
 def stamp_pdf(
-    input_pdf: str,
-    output_pdf: str,
-    cidade: str,
-    d: date | None = None,
-    options: StampOptions | None = None,
+    input_pdf: str, output_pdf: str, cidade: str, d: date | None = None, options: StampOptions | None = None
 ) -> None:
-    """Carimba o PDF com "Cidade, dia de mês de ano".
+    """Apply a stamp and atomically replace the output only after a successful save.
 
-    - input_pdf: caminho do PDF de entrada
-    - output_pdf: caminho do PDF de saída
-    - cidade: nome da cidade
-    - d: data (padrão = hoje)
-    - options: configurações de página/posição/estilo
+    Default coordinates are retained for compatibility with existing templates.
+    Existing encryption is kept unless new protection is explicitly requested.
     """
-    if options is None:
-        options = StampOptions()
-    if d is None:
-        d = date.today()
-
-    # Duas linhas: 1) cidade  2) data por extenso
-    linha1 = f"{cidade}".upper()
-    linha2 = f"{data_por_extenso(d)}.".upper()
-    linhas_ativas: list[tuple[str, str]] = []
-    if options.stamp_city:
-        linhas_ativas.append(("city", linha1))
-    if options.stamp_date:
-        linhas_ativas.append(("date", linha2))
-
-    doc = fitz.open(input_pdf)
-    replace_plan: tuple[Path, Path] | None = None
+    options = options or StampOptions()
+    _validate(options, cidade)
+    source = Path(input_pdf).expanduser().resolve()
+    target = Path(output_pdf).expanduser().resolve()
+    logo = _resolve_logo(source, options)
+    temporary: Path | None = None
     try:
-        if options.page < 0 or options.page >= len(doc):
-            raise IndexError(f"Página {options.page} não existe no PDF (total {len(doc)}).")
-        page = doc[options.page]
-
-        # Definir posição padrão/atributos
-        fontname = _resolve_pdf_font_name(options.font or "helv", options.bold, options.italic)
-        used_font = fontname
-        fontsize = options.font_size
-        color = _parse_hex_color(options.color)
-
-        width, height = page.rect.width, page.rect.height
-    # Cálculo de largura com fallback de fonte (usado só para leading)
-        try:
-            w1 = fitz.get_text_length(linha1, fontname=fontname, fontsize=fontsize)
-            w2 = fitz.get_text_length(linha2, fontname=fontname, fontsize=fontsize)
-        except Exception:
-            fontname = _resolve_pdf_font_name("helv", options.bold, options.italic)
-            used_font = fontname
-            w1 = fitz.get_text_length(linha1, fontname=fontname, fontsize=fontsize)
-            w2 = fitz.get_text_length(linha2, fontname=fontname, fontsize=fontsize)
-        leading = fontsize * 1.2  # espaçamento entre linhas (aprox.)
-
-    # Sistema de coordenadas simples:
-    # - Origem (0,0) no canto superior esquerdo.
-    # - X cresce para a direita; Y cresce para baixo.
-    # - X é a posição absoluta do início do texto (alinhado à esquerda).
-
-        # Padrão: posições fixas em pt se x/y não forem informados.
-        lines_to_draw: list[tuple[str, float, float]] = []
-        if options.x is None and options.y is None:
-            default_coords = {
-                "city": (337.0, 280.0),
-                "date": (391.0, 307.0),
-            }
-            for kind, text in linhas_ativas:
-                x_def, y_def = default_coords.get(kind, (337.0, 280.0))
-                lines_to_draw.append((text, x_def, y_def))
-        else:
-            x_base = options.x if options.x is not None else options.margin
-            y_base = options.y if options.y is not None else (height - options.margin)
-            temp: list[tuple[str, float, float]] = []
-            y_cursor = y_base
-            for kind, text in reversed(linhas_ativas):
-                temp.append((text, x_base, y_cursor))
-                y_cursor -= leading
-            lines_to_draw = list(reversed(temp))
-
-        used_font = fontname
-        if not lines_to_draw:
-            try:
-                print("[data-hora-pdf] Aviso: Nenhum texto carimbado (cidade/data desativadas).")
-            except Exception:
-                pass
-        else:
-            current_font = fontname
-            for text, x_pos, y_pos in lines_to_draw:
-                try:
-                    page.insert_text((x_pos, y_pos), text, fontsize=fontsize, fontname=current_font, fill=color, render_mode=0)
-                except Exception:
-                    current_font = _resolve_pdf_font_name("helv", options.bold, options.italic)
-                    used_font = current_font
-                    page.insert_text((x_pos, y_pos), text, fontsize=fontsize, fontname=current_font, fill=color, render_mode=0)
-            # Log simples para depuração
-            try:
-                print(f"[data-hora-pdf] Fonte efetiva: {used_font} | bold={options.bold} | italic={options.italic}")
-            except Exception:
-                pass
-
-        # Inserir logo no canto inferior esquerdo, se disponível
-        def _resolve_logo_path() -> Path | None:
-            # prioridade: options.logo_path > arquivo padrão no CWD > diretório do PDF de entrada
-            candidates: list[Path] = []
-            if options.logo_path:
-                candidates.append(Path(options.logo_path))
-            # nomes comuns
-            for name in ("Logo.jpg", "logo.jpg", "Logo.png", "logo.png"):
-                candidates.append(Path.cwd() / name)
-            for name in ("Logo.jpg", "logo.jpg", "Logo.png", "logo.png"):
-                candidates.append(Path(input_pdf).resolve().parent / name)
-            for p in candidates:
-                try:
-                    if p.exists():
-                        return p
-                except Exception:
-                    continue
-            return None
-
-        logo_file = _resolve_logo_path()
-        if logo_file is not None:
-            # Inserir somente via Pillow para evitar avisos de ICC do MuPDF
-            try:
-                from PIL import Image  # type: ignore
-
-                with Image.open(logo_file) as im:
-                    im = im.convert("RGB")
-                    w_img, h_img = im.size
-                    bio = io.BytesIO()
-                    # PNG RGB SEM perfil ICC para evitar mensagens do MuPDF
-                    im.save(bio, format="PNG", icc_profile=None)
-                    data = bio.getvalue()
-
-                w_pt = options.logo_width_cm * 28.3465  # 1cm = 28.3465pt
-                h_pt = w_pt * (h_img / w_img)
-                left = options.logo_margin_cm * 28.3465
-                bottom = height - options.logo_margin_cm * 28.3465
-                rect = fitz.Rect(left, bottom - h_pt, left + w_pt, bottom)
-                page.insert_image(rect, stream=data, keep_proportion=True)
-            except Exception:
-                # não interromper o carimbo se o logo falhar
-                pass
-
-        # Salvar: se for o mesmo arquivo, salvar em tmp e substituir após fechar
-        try:
-            same = Path(input_pdf).resolve() == Path(output_pdf).resolve()
-        except Exception:
-            same = False
-        
-        # Aplicar proteções se especificadas
-        if options.protection_password or options.restrict_editing or not options.allow_copy or options.encrypt_content:
-            # Configurar permissões
-            permissions = -1  # Todas as permissões por padrão
-            
-            if options.restrict_editing:
-                # Remove permissões de modificação
-                permissions &= ~(fitz.PDF_PERM_MODIFY | fitz.PDF_PERM_ANNOTATE | fitz.PDF_PERM_FORM)
-            
-            if not options.allow_copy:
-                # Remove permissões de cópia
-                permissions &= ~(fitz.PDF_PERM_COPY | fitz.PDF_PERM_ACCESSIBILITY)
-            
-            # Definir senhas
-            owner_password = options.protection_password or ""
-            user_password = ""  # Sem senha para abrir o documento
-            
-            # Aplicar encriptação
-            if options.encrypt_content:
-                # Usar encriptação forte
-                encrypt_method = fitz.PDF_ENCRYPT_AES_256
-            else:
-                # Usar encriptação padrão
-                encrypt_method = fitz.PDF_ENCRYPT_RC4_128
-            
-            # Configurar a proteção do documento
-            try:
-                # O PyMuPDF usa a função save com parâmetros de encriptação
-                if same:
-                    target = Path(output_pdf)
-                    tmp = target.with_name(f"{target.stem}__tmp__{target.suffix}")
-                    doc.save(str(tmp), 
-                            encryption=encrypt_method,
-                            owner_pw=owner_password,
-                            user_pw=user_password,
-                            permissions=permissions)
-                    replace_plan = (tmp, target)
-                else:
-                    doc.save(output_pdf,
-                            encryption=encrypt_method,
-                            owner_pw=owner_password,
-                            user_pw=user_password,
-                            permissions=permissions)
-            except Exception as e:
-                # Fallback: salvar sem proteção se der erro
-                print(f"[data-hora-pdf] Aviso: Não foi possível aplicar proteção: {e}")
-                if same:
-                    target = Path(output_pdf)
-                    tmp = target.with_name(f"{target.stem}__tmp__{target.suffix}")
-                    doc.save(str(tmp))
-                    replace_plan = (tmp, target)
-                else:
-                    doc.save(output_pdf)
-        else:
-            # Salvar normalmente sem proteção
-            if same:
-                target = Path(output_pdf)
-                tmp = target.with_name(f"{target.stem}__tmp__{target.suffix}")
-                doc.save(str(tmp))
-                replace_plan = (tmp, target)
-            else:
-                doc.save(output_pdf)
+        with fitz.open(source) as doc:
+            if not doc.is_pdf:
+                raise ValueError("O arquivo de entrada deve ser um PDF.")
+            if doc.needs_pass and not doc.authenticate(options.input_password or ""):
+                raise ValueError("PDF protegido: informe a senha de entrada correta.")
+            if options.page < 0 or options.page >= len(doc):
+                raise IndexError(f"Página {options.page} não existe no PDF (total {len(doc)}).")
+            page = doc[options.page]
+            _insert_text(page, cidade, d or date.today(), options)
+            if logo is not None:
+                _insert_logo(page, logo, options)
+            fd, name = tempfile.mkstemp(prefix=f".{target.stem}-", suffix=".pdf", dir=target.parent)
+            os.close(fd)
+            temporary = Path(name)
+            # A failed encryption or write must never fall back to an unprotected PDF.
+            doc.save(str(temporary), deflate=True, **_save_options(options))
+        os.replace(temporary, target)
     finally:
-        doc.close()
-        if replace_plan is not None:
-            tmp, target = replace_plan
-            try:
-                tmp.replace(target)
-            finally:
-                if tmp.exists():
-                    try:
-                        tmp.unlink()
-                    except Exception:
-                        pass
+        if temporary is not None:
+            temporary.unlink(missing_ok=True)

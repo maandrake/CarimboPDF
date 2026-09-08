@@ -1,3 +1,5 @@
+> Documento histórico da versão 2. Para o comportamento atual, consulte [README.md](README.md).
+
 # Seletor de Data Personalizada - CarimboPDF
 
 ## ✅ Funcionalidades Implementadas
