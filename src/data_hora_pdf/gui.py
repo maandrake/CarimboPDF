@@ -27,9 +27,14 @@ class StampApp:
         root.title("CarimboPDF")
         assets = Path(__file__).parent / "assets"
         self.icon_image = tk.PhotoImage(master=root, file=str(assets / "carimbopdf.png"))
-        root.iconphoto(True, self.icon_image)
         if os.name == "nt":
-            root.iconbitmap(default=str(assets / "carimbopdf.ico"))
+            # Set both the default for dialogs and the current window explicitly.
+            # A prior iconphoto is a specific icon and can override the default.
+            icon_path = str(assets / "carimbopdf.ico")
+            root.iconbitmap(default=icon_path)
+            root.iconbitmap(icon_path)
+        else:
+            root.iconphoto(True, self.icon_image)
         root.minsize(680, 600)
         style = ttk.Style(root)
         if "clam" in style.theme_names():
@@ -90,7 +95,11 @@ class StampApp:
         self.preview = tk.StringVar(root)
         shell = ttk.Frame(root, padding=20)
         shell.pack(fill="both", expand=True)
-        ttk.Label(shell, text="CarimboPDF", style="Title.TLabel").pack(anchor="w")
+        self.header_icon = self.icon_image.subsample(max(1, self.icon_image.width() // 56))
+        self.title_label = ttk.Label(
+            shell, text="  CarimboPDF", image=self.header_icon, compound="left", style="Title.TLabel"
+        )
+        self.title_label.pack(anchor="w")
         ttk.Label(shell, text="Cidade, data e identidade nos seus documentos.", style="Subtitle.TLabel").pack(
             anchor="w", pady=(2, 16)
         )

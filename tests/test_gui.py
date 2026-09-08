@@ -40,6 +40,25 @@ def test_gui_layout_and_defaults(app):
     assert app.vars["output"].get() == "documento.pdf"
 
 
+def test_window_and_header_icon(app):
+    import os
+
+    app.root.update_idletasks()
+    assert app.title_label.cget("image")
+    assert 48 <= app.header_icon.width() <= 64
+    if os.name == "nt":
+        import ctypes
+        from ctypes import wintypes
+
+        # Query the native window: Tk's getter does not return ICO filenames.
+        send_message = ctypes.windll.user32.SendMessageW
+        send_message.argtypes = [wintypes.HWND, wintypes.UINT, wintypes.WPARAM, wintypes.LPARAM]
+        send_message.restype = ctypes.c_void_p
+        hwnd = int(app.root.frame(), 16)
+        assert send_message(hwnd, 0x007F, 0, 0)  # WM_GETICON, ICON_SMALL
+        assert send_message(hwnd, 0x007F, 1, 0)  # WM_GETICON, ICON_BIG
+
+
 def test_gui_processes_pdf_and_restores_button(app, tmp_path, monkeypatch):
     from data_hora_pdf import gui
 
