@@ -1,5 +1,7 @@
 # CarimboPDF
 
+<img src="src/data_hora_pdf/assets/carimbopdf.png" alt="Ícone CarimboPDF" width="128">
+
 Aplicação Python para carimbar PDFs com cidade e data em português, logo e proteção de edição.
 
 ## Instalação e execução

@@ -25,6 +25,11 @@ class StampApp:
         self.future = None
         self.executor = None
         root.title("CarimboPDF")
+        assets = Path(__file__).parent / "assets"
+        self.icon_image = tk.PhotoImage(master=root, file=str(assets / "carimbopdf.png"))
+        root.iconphoto(True, self.icon_image)
+        if os.name == "nt":
+            root.iconbitmap(default=str(assets / "carimbopdf.ico"))
         root.minsize(680, 600)
         style = ttk.Style(root)
         if "clam" in style.theme_names():

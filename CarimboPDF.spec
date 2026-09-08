@@ -6,7 +6,10 @@ a = Analysis(
     [str(ROOT / 'CarimboPDF_GUI.pyw')],
     pathex=[str(ROOT / 'src')],
     binaries=[],
-    datas=[(str(ROOT / 'Logo.jpg'), '.')],
+    datas=[
+        (str(ROOT / 'Logo.jpg'), '.'),
+        (str(ROOT / 'src/data_hora_pdf/assets'), 'data_hora_pdf/assets'),
+    ],
     hiddenimports=['babel.numbers'],
     hookspath=[],
     hooksconfig={},
@@ -19,4 +22,5 @@ exe = EXE(
     pyz, a.scripts, a.binaries, a.datas, [],
     name='CarimboPDF', debug=False, bootloader_ignore_signals=False,
     strip=False, upx=False, console=False,
+    icon=str(ROOT / 'src/data_hora_pdf/assets/carimbopdf.ico'),
 )
